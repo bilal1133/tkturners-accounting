@@ -9,8 +9,8 @@ export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
 
-  const [identifier, setIdentifier] = useState('bilal@tkturners.com');
-  const [password, setPassword] = useState('ChangeMe123!');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 

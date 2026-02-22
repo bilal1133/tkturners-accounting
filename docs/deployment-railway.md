@@ -7,6 +7,14 @@
 
 ## API env vars
 Set all values from `/Users/bilal/dev/tkturners/tkturners-accounting/.env.example` API section.
+Required for production hardening:
+- `CRON_SECRET`
+- `FINANCE_SEED_ADMIN_PASSWORD_1`
+- `FINANCE_SEED_ADMIN_PASSWORD_2`
+- `RATE_LIMIT_AUTH_MAX`
+- `RATE_LIMIT_AUTH_WINDOW_MS`
+- `RATE_LIMIT_SLACK_MAX`
+- `RATE_LIMIT_SLACK_WINDOW_MS`
 
 ## Web env vars
 - `NEXT_PUBLIC_API_URL=https://<api-domain>/api`

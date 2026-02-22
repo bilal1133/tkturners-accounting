@@ -1,11 +1,16 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { formatMinor, todayDate } from '@/lib/format';
+import { validateWithSchema } from '@/lib/validation';
 import type { Account, Category, Counterparty, Subscription } from '@/lib/types';
+import { FormActions, FormField } from '@/components/ui/form-field';
+import { Modal } from '@/components/ui/modal';
+import { PageHeader } from '@/components/ui/page-header';
 
 type FormState = {
   vendor_counterparty_id: number;
@@ -19,6 +24,26 @@ type FormState = {
   next_run_date: string;
   description: string;
 };
+
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format.');
+
+const subscriptionFormSchema = z.object({
+  vendor_name: z.string().trim().min(1, 'Vendor name is required.').max(120, 'Vendor name is too long.'),
+  amount_major: z
+    .string()
+    .trim()
+    .min(1, 'Amount is required.')
+    .refine((value) => {
+      const parsed = Number(value.replace(/,/g, ''));
+      return Number.isFinite(parsed) && parsed > 0;
+    }, 'Amount must be greater than 0.'),
+  account_id: z.number().int().positive('Account is required.'),
+  category_id: z.number().int().positive('Category is required.'),
+  frequency: z.enum(['MONTHLY', 'ANNUAL', 'CUSTOM']),
+  interval_count: z.number().int().positive('Interval count must be at least 1.'),
+  next_run_date: dateSchema,
+  description: z.string().max(500, 'Description cannot exceed 500 characters.'),
+});
 
 function minorToMajorInput(amountMinor: number | null | undefined): string {
   const numeric = Number(amountMinor || 0);
@@ -44,28 +69,30 @@ function majorInputToMinor(rawValue: string): number {
   return Math.round(numeric * 100);
 }
 
+const emptyForm: FormState = {
+  vendor_counterparty_id: 0,
+  vendor_name: '',
+  amount_major: '',
+  currency: 'USD',
+  account_id: 0,
+  category_id: 0,
+  frequency: 'MONTHLY',
+  interval_count: 1,
+  next_run_date: todayDate(),
+  description: '',
+};
+
 export default function SubscriptionsPage() {
   const { token } = useAuth();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [counterparties, setCounterparties] = useState<Counterparty[]>([]);
+  const [form, setForm] = useState<FormState>(emptyForm);
   const [editingSubscriptionId, setEditingSubscriptionId] = useState<number | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [busySubscriptionId, setBusySubscriptionId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [form, setForm] = useState<FormState>({
-    vendor_counterparty_id: 0,
-    vendor_name: '',
-    amount_major: '',
-    currency: 'USD',
-    account_id: 0,
-    category_id: 0,
-    frequency: 'MONTHLY',
-    interval_count: 1,
-    next_run_date: todayDate(),
-    description: '',
-  });
 
   const vendorCounterparties = useMemo(
     () => counterparties.filter((entry) => entry.kind !== 'EMPLOYEE'),
@@ -80,6 +107,19 @@ export default function SubscriptionsPage() {
     return map;
   }, [vendorCounterparties]);
 
+  const resetForm = (accountPayload: Account[] = accounts, categoryPayload: Category[] = categories) => {
+    const defaultAccount = accountPayload[0];
+    const defaultCategory =
+      categoryPayload.find((category) => category.name === 'Subscriptions') || categoryPayload[0] || null;
+
+    setForm({
+      ...emptyForm,
+      account_id: defaultAccount?.id || 0,
+      category_id: defaultCategory?.id || 0,
+      currency: defaultAccount?.currency || 'USD',
+    });
+  };
+
   const loadData = async () => {
     if (!token) return;
 
@@ -90,25 +130,27 @@ export default function SubscriptionsPage() {
       apiRequest<Counterparty[]>('/finance/counterparties', { token }),
     ]);
 
-    const vendorOptions = counterpartyPayload.filter((entry) => entry.kind !== 'EMPLOYEE');
-
     setSubscriptions(subscriptionPayload);
     setAccounts(accountPayload);
     setCategories(categoryPayload);
     setCounterparties(counterpartyPayload);
 
-    setForm((prev) => ({
-      ...prev,
-      account_id: prev.account_id || accountPayload[0]?.id || 0,
-      category_id:
-        prev.category_id ||
-        categoryPayload.find((category) => category.name === 'Subscriptions')?.id ||
-        categoryPayload[0]?.id ||
-        0,
-      vendor_counterparty_id: prev.vendor_counterparty_id || vendorOptions[0]?.id || 0,
-      vendor_name: prev.vendor_name || vendorOptions[0]?.name || '',
-      currency: accountPayload[0]?.currency || 'USD',
-    }));
+    setForm((prev) => {
+      if (prev.account_id && prev.category_id) {
+        return prev;
+      }
+
+      const defaultAccount = accountPayload[0];
+      const defaultCategory =
+        categoryPayload.find((category) => category.name === 'Subscriptions') || categoryPayload[0] || null;
+
+      return {
+        ...prev,
+        account_id: prev.account_id || defaultAccount?.id || 0,
+        category_id: prev.category_id || defaultCategory?.id || 0,
+        currency: defaultAccount?.currency || prev.currency,
+      };
+    });
   };
 
   useEffect(() => {
@@ -148,28 +190,51 @@ export default function SubscriptionsPage() {
     return Number(createdCounterparty.id);
   };
 
+  const openCreateModal = () => {
+    setEditingSubscriptionId(null);
+    resetForm();
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setEditingSubscriptionId(null);
+    resetForm();
+  };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token) return;
 
-    try {
-      const amountMinor = majorInputToMinor(form.amount_major);
-      if (amountMinor <= 0) {
-        setError('Amount must be greater than 0.');
-        return;
-      }
+    const parsed = validateWithSchema(subscriptionFormSchema, {
+      ...form,
+      description: form.description || '',
+      vendor_name: form.vendor_name || '',
+      amount_major: form.amount_major || '',
+      account_id: Number(form.account_id),
+      category_id: Number(form.category_id),
+      interval_count: Number(form.interval_count || 1),
+      next_run_date: form.next_run_date,
+    });
 
-      const selectedAccount = accounts.find((account) => Number(account.id) === Number(form.account_id));
+    if (!parsed.success) {
+      setError(parsed.message);
+      return;
+    }
+
+    try {
+      const amountMinor = majorInputToMinor(parsed.data.amount_major);
+      const selectedAccount = accounts.find((account) => Number(account.id) === Number(parsed.data.account_id));
       const payload = {
         vendor_counterparty_id: await resolveVendorCounterpartyId(),
         amount_minor: amountMinor,
         currency: selectedAccount?.currency || form.currency,
-        account_id: Number(form.account_id),
-        category_id: Number(form.category_id),
-        frequency: form.frequency,
-        interval_count: Number(form.interval_count || 1),
-        next_run_date: form.next_run_date,
-        description: form.description || null,
+        account_id: Number(parsed.data.account_id),
+        category_id: Number(parsed.data.category_id),
+        frequency: parsed.data.frequency,
+        interval_count: Number(parsed.data.interval_count || 1),
+        next_run_date: parsed.data.next_run_date,
+        description: parsed.data.description || null,
       };
 
       if (editingSubscriptionId) {
@@ -185,13 +250,9 @@ export default function SubscriptionsPage() {
           body: payload,
         });
       }
-      setEditingSubscriptionId(null);
+
+      closeModal();
       await loadData();
-      setForm((prev) => ({
-        ...prev,
-        amount_major: '',
-        description: '',
-      }));
       setError(null);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Failed to save subscription');
@@ -214,6 +275,7 @@ export default function SubscriptionsPage() {
       next_run_date: subscription.next_run_date,
       description: subscription.description || '',
     });
+    setIsModalOpen(true);
   };
 
   const removeSubscription = async (subscriptionId: number) => {
@@ -228,7 +290,7 @@ export default function SubscriptionsPage() {
         method: 'DELETE',
       });
       if (editingSubscriptionId === subscriptionId) {
-        setEditingSubscriptionId(null);
+        closeModal();
       }
       await loadData();
       setError(null);
@@ -241,154 +303,147 @@ export default function SubscriptionsPage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">RECURRING EXPENSES</p>
-          <h2>Subscriptions</h2>
-        </div>
-      </header>
+      <PageHeader
+        badge="RECURRING EXPENSES"
+        title="Subscriptions"
+        subtitle="Track recurring expenses and generate due transactions."
+        actions={
+          <button className="primary-button" type="button" onClick={openCreateModal}>
+            New Subscription
+          </button>
+        }
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      <form className="card" onSubmit={submit}>
-        <h3>{editingSubscriptionId ? `Edit Subscription #${editingSubscriptionId}` : 'Add Subscription'}</h3>
-        <div className="form-grid">
-          <label>
-            Vendor
-            <input
-              list="subscription-vendors"
-              placeholder="Type vendor (e.g., ChatGPT, Figma)"
-              value={form.vendor_name}
-              onChange={(event) => {
-                const value = event.target.value;
-                const match = vendorByNameMap.get(value.trim().toLowerCase());
-                setForm((prev) => ({
-                  ...prev,
-                  vendor_name: value,
-                  vendor_counterparty_id: match ? Number(match.id) : 0,
-                }));
-              }}
-              required
-            />
-            <datalist id="subscription-vendors">
-              {vendorCounterparties.map((entry) => (
-                <option key={entry.id} value={entry.name} />
-              ))}
-            </datalist>
-            <small style={{ color: 'var(--muted)' }}>
-              Select an existing vendor or type a new one. New names are saved automatically.
-            </small>
-          </label>
-          <label>
-            Amount ({accounts.find((entry) => Number(entry.id) === Number(form.account_id))?.currency || form.currency})
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={form.amount_major}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, amount_major: event.target.value }))
-              }
-              placeholder="0.00"
-              required
-            />
-          </label>
-          <label>
-            Account
-            <select
-              value={form.account_id}
-              onChange={(event) => {
-                const accountId = Number(event.target.value);
-                const selectedAccount = accounts.find((entry) => Number(entry.id) === accountId);
-                setForm((prev) => ({
-                  ...prev,
-                  account_id: accountId,
-                  currency: selectedAccount?.currency || prev.currency,
-                }));
-              }}
+      <Modal
+        open={isModalOpen}
+        onClose={closeModal}
+        title={editingSubscriptionId ? `Edit Subscription #${editingSubscriptionId}` : 'Add Subscription'}
+      >
+        <form className="page" onSubmit={submit}>
+          <div className="form-grid">
+            <FormField
+              label="Vendor"
+              hint="Select an existing vendor or type a new one. New names are saved automatically."
             >
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Category
-            <select
-              value={form.category_id}
-              onChange={(event) => setForm((prev) => ({ ...prev, category_id: Number(event.target.value) }))}
+              <>
+                <input
+                  list="subscription-vendors"
+                  placeholder="Type vendor (e.g., ChatGPT, Figma)"
+                  value={form.vendor_name}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    const match = vendorByNameMap.get(value.trim().toLowerCase());
+                    setForm((prev) => ({
+                      ...prev,
+                      vendor_name: value,
+                      vendor_counterparty_id: match ? Number(match.id) : 0,
+                    }));
+                  }}
+                  required
+                />
+                <datalist id="subscription-vendors">
+                  {vendorCounterparties.map((entry) => (
+                    <option key={entry.id} value={entry.name} />
+                  ))}
+                </datalist>
+              </>
+            </FormField>
+
+            <FormField
+              label={`Amount (${accounts.find((entry) => Number(entry.id) === Number(form.account_id))?.currency || form.currency})`}
             >
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Frequency
-            <select
-              value={form.frequency}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, frequency: event.target.value as FormState['frequency'] }))
-              }
-            >
-              <option value="MONTHLY">Monthly</option>
-              <option value="ANNUAL">Annual</option>
-              <option value="CUSTOM">Custom</option>
-            </select>
-          </label>
-          <label>
-            Interval Count
-            <input
-              type="number"
-              value={form.interval_count}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, interval_count: Number(event.target.value || 1) }))
-              }
-            />
-          </label>
-          <label>
-            Next Run Date
-            <input
-              type="date"
-              value={form.next_run_date}
-              onChange={(event) => setForm((prev) => ({ ...prev, next_run_date: event.target.value }))}
-            />
-          </label>
-        </div>
-        <label>
-          Description
-          <textarea
-            value={form.description}
-            onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-          />
-        </label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="primary-button" type="submit">
-            {editingSubscriptionId ? 'Update Subscription' : 'Save Subscription'}
-          </button>
-          {editingSubscriptionId ? (
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => {
-                setEditingSubscriptionId(null);
-                setForm((prev) => ({
-                  ...prev,
-                  amount_major: '',
-                  interval_count: 1,
-                  description: '',
-                }));
-              }}
-            >
-              Cancel Edit
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={form.amount_major}
+                onChange={(event) => setForm((prev) => ({ ...prev, amount_major: event.target.value }))}
+                placeholder="0.00"
+                required
+              />
+            </FormField>
+
+            <FormField label="Account">
+              <select
+                value={form.account_id}
+                onChange={(event) => {
+                  const accountId = Number(event.target.value);
+                  const selectedAccount = accounts.find((entry) => Number(entry.id) === accountId);
+                  setForm((prev) => ({
+                    ...prev,
+                    account_id: accountId,
+                    currency: selectedAccount?.currency || prev.currency,
+                  }));
+                }}
+              >
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+
+            <FormField label="Category">
+              <select
+                value={form.category_id}
+                onChange={(event) => setForm((prev) => ({ ...prev, category_id: Number(event.target.value) }))}
+              >
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+
+            <FormField label="Frequency">
+              <select
+                value={form.frequency}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, frequency: event.target.value as FormState['frequency'] }))
+                }
+              >
+                <option value="MONTHLY">Monthly</option>
+                <option value="ANNUAL">Annual</option>
+                <option value="CUSTOM">Custom</option>
+              </select>
+            </FormField>
+
+            <FormField label="Interval Count">
+              <input
+                type="number"
+                min={1}
+                value={form.interval_count}
+                onChange={(event) => setForm((prev) => ({ ...prev, interval_count: Number(event.target.value || 1) }))}
+              />
+            </FormField>
+
+            <FormField label="Next Run Date">
+              <input
+                type="date"
+                value={form.next_run_date}
+                onChange={(event) => setForm((prev) => ({ ...prev, next_run_date: event.target.value }))}
+              />
+            </FormField>
+          </div>
+
+          <FormField label="Description">
+            <textarea value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} />
+          </FormField>
+
+          <FormActions>
+            <button className="primary-button" type="submit">
+              {editingSubscriptionId ? 'Update Subscription' : 'Save Subscription'}
             </button>
-          ) : null}
-        </div>
-      </form>
+            <button className="ghost-button" type="button" onClick={closeModal}>
+              Cancel
+            </button>
+          </FormActions>
+        </form>
+      </Modal>
 
       <div className="card table-wrap">
         <table className="table">
@@ -414,39 +469,41 @@ export default function SubscriptionsPage() {
                 <td>{subscription.next_run_date}</td>
                 <td>{subscription.account_name}</td>
                 <td>{subscription.is_active ? 'Active' : 'Inactive'}</td>
-                <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button className="ghost-button" type="button" onClick={() => startEdit(subscription)}>
-                    Edit
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => {
-                      if (!token) return;
-                      apiRequest(`/finance/subscriptions/${subscription.id}/generate`, {
-                        token,
-                        method: 'POST',
-                      })
-                        .then(() => loadData())
-                        .catch((generateError) => {
-                          setError(
-                            generateError instanceof Error
-                              ? generateError.message
-                              : 'Failed to generate subscription run'
-                          );
-                        });
-                    }}
-                  >
-                    Generate
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => removeSubscription(Number(subscription.id))}
-                    disabled={busySubscriptionId === Number(subscription.id)}
-                  >
-                    {busySubscriptionId === Number(subscription.id) ? 'Deleting...' : 'Delete'}
-                  </button>
+                <td>
+                  <div className="table-actions">
+                    <button className="ghost-button" type="button" onClick={() => startEdit(subscription)}>
+                      Edit
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => {
+                        if (!token) return;
+                        apiRequest(`/finance/subscriptions/${subscription.id}/generate`, {
+                          token,
+                          method: 'POST',
+                        })
+                          .then(() => loadData())
+                          .catch((generateError) => {
+                            setError(
+                              generateError instanceof Error
+                                ? generateError.message
+                                : 'Failed to generate subscription run'
+                            );
+                          });
+                      }}
+                    >
+                      Generate
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => removeSubscription(Number(subscription.id))}
+                      disabled={busySubscriptionId === Number(subscription.id)}
+                    >
+                      {busySubscriptionId === Number(subscription.id) ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

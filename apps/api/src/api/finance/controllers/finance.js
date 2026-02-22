@@ -101,13 +101,15 @@ module.exports = {
       ctx.body = {
         ok: false,
         db: 'unreachable',
-        error: error.message,
+        error: process.env.NODE_ENV === 'production' ? 'Database connectivity check failed.' : error.message,
       };
     }
   },
 
   async healthModels(ctx) {
     try {
+      const { membership } = await requireMembership(ctx);
+      requireRole(membership, 'ADMIN');
       ctx.body = await getHealthModels();
     } catch (error) {
       handleControllerError(ctx, error);
@@ -865,7 +867,14 @@ module.exports = {
   async subscriptionCron(ctx) {
     try {
       const secret = process.env.CRON_SECRET;
-      if (secret) {
+      if (!secret) {
+        if (process.env.NODE_ENV === 'production') {
+          ctx.status = 503;
+          ctx.body = { error: 'Cron endpoint is disabled because CRON_SECRET is not configured.' };
+          return;
+        }
+        strapi.log.warn('CRON_SECRET is not configured. Allowing cron call in non-production mode.');
+      } else {
         const incoming = ctx.request.headers['x-cron-secret'];
         if (incoming !== secret) {
           ctx.status = 401;

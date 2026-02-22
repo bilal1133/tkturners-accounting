@@ -152,16 +152,33 @@ async function ensureUsersAndMemberships(strapiInstance, workspaceId) {
   }
   await ensureAuthenticatedRolePermissions(knex, role.id);
 
+  const defaultSeedPassword = 'ChangeMe123!';
+  const resolveSeedPassword = (envKey) => {
+    const configured = process.env[envKey];
+    if (configured && configured.trim()) {
+      return configured.trim();
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(`${envKey} must be set in production.`);
+    }
+
+    strapiInstance.log.warn(
+      `${envKey} is not set. Falling back to development default password for seed user creation.`
+    );
+    return defaultSeedPassword;
+  };
+
   const seedUsers = [
     {
       email: process.env.FINANCE_SEED_ADMIN_EMAIL_1 || 'bilal@tkturners.com',
       username: process.env.FINANCE_SEED_ADMIN_USERNAME_1 || 'bilal',
-      password: process.env.FINANCE_SEED_ADMIN_PASSWORD_1 || 'ChangeMe123!',
+      password: resolveSeedPassword('FINANCE_SEED_ADMIN_PASSWORD_1'),
     },
     {
       email: process.env.FINANCE_SEED_ADMIN_EMAIL_2 || 'cofounder@tkturners.com',
       username: process.env.FINANCE_SEED_ADMIN_USERNAME_2 || 'cofounder',
-      password: process.env.FINANCE_SEED_ADMIN_PASSWORD_2 || 'ChangeMe123!',
+      password: resolveSeedPassword('FINANCE_SEED_ADMIN_PASSWORD_2'),
     },
   ];
 

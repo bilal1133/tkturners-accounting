@@ -2,13 +2,30 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { formatMinor } from '@/lib/format';
+import { validateWithSchema } from '@/lib/validation';
 import type { Account, Department, Employee } from '@/lib/types';
+import { FormActions, FormField } from '@/components/ui/form-field';
+import { Modal } from '@/components/ui/modal';
+import { PageHeader } from '@/components/ui/page-header';
 
 const PAYROLL_CURRENCIES = ['USD', 'EUR', 'PKR'] as const;
+
+const employeeUpdateSchema = z.object({
+  status: z.enum(['ACTIVE', 'INACTIVE']),
+  payroll_currency: z.enum(PAYROLL_CURRENCIES),
+  default_payout_account_id: z.number().int().positive('Settlement account is required.'),
+  default_funding_account_id: z.number().int().nonnegative(),
+  department_id: z.number().int().nonnegative(),
+  base_salary_minor: z.number().int().nonnegative('Base salary cannot be negative.'),
+  default_allowances_minor: z.number().int().nonnegative('Allowances cannot be negative.'),
+  default_non_loan_deductions_minor: z.number().int().nonnegative('Deductions cannot be negative.'),
+  notes: z.string().max(1000, 'Notes cannot exceed 1000 characters.'),
+});
 
 type TimelineResponse = {
   employee: Employee & { active_loan?: unknown };
@@ -38,6 +55,7 @@ export default function EmployeeDetailPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const [form, setForm] = useState({
     status: 'ACTIVE' as 'ACTIVE' | 'INACTIVE',
@@ -100,10 +118,31 @@ export default function EmployeeDetailPage() {
     });
   }, [token, employeeId]);
 
+  const closeModal = () => {
+    setIsEditModalOpen(false);
+  };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token || !employeeId) return;
-    if (!form.default_payout_account_id) {
+
+    const parsed = validateWithSchema(employeeUpdateSchema, {
+      ...form,
+      default_payout_account_id: Number(form.default_payout_account_id),
+      default_funding_account_id: Number(form.default_funding_account_id || 0),
+      department_id: Number(form.department_id || 0),
+      base_salary_minor: Number(form.base_salary_minor || 0),
+      default_allowances_minor: Number(form.default_allowances_minor || 0),
+      default_non_loan_deductions_minor: Number(form.default_non_loan_deductions_minor || 0),
+      notes: form.notes || '',
+    });
+
+    if (!parsed.success) {
+      setError(parsed.message);
+      return;
+    }
+
+    if (!parsed.data.default_payout_account_id) {
       setError('Select a settlement account before saving.');
       return;
     }
@@ -114,13 +153,14 @@ export default function EmployeeDetailPage() {
         token,
         method: 'PATCH',
         body: {
-          ...form,
-          default_funding_account_id: form.default_funding_account_id || null,
-          department_id: form.department_id || null,
-          notes: form.notes || null,
+          ...parsed.data,
+          default_funding_account_id: parsed.data.default_funding_account_id || null,
+          department_id: parsed.data.department_id || null,
+          notes: parsed.data.notes || null,
         },
       });
       await load();
+      closeModal();
       setError(null);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to update employee');
@@ -131,21 +171,24 @@ export default function EmployeeDetailPage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">EMPLOYEE TIMELINE</p>
-          <h2>{employee ? `${employee.employee_code} - ${employee.full_name}` : 'Employee'}</h2>
-        </div>
-      </header>
+      <PageHeader
+        badge="EMPLOYEE TIMELINE"
+        title={employee ? `${employee.employee_code} - ${employee.full_name}` : 'Employee'}
+        actions={
+          employee ? (
+            <button className="primary-button" type="button" onClick={() => setIsEditModalOpen(true)}>
+              Edit Employee
+            </button>
+          ) : null
+        }
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      {employee ? (
-        <form className="card" onSubmit={submit}>
-          <h3>Profile</h3>
+      <Modal open={isEditModalOpen} onClose={closeModal} title="Edit Employee" size="lg">
+        <form className="page" onSubmit={submit}>
           <div className="form-grid">
-            <label>
-              Status
+            <FormField label="Status">
               <select
                 value={form.status}
                 onChange={(event) =>
@@ -155,9 +198,9 @@ export default function EmployeeDetailPage() {
                 <option value="ACTIVE">Active</option>
                 <option value="INACTIVE">Inactive</option>
               </select>
-            </label>
-            <label>
-              Payroll Currency
+            </FormField>
+
+            <FormField label="Payroll Currency">
               <select
                 value={form.payroll_currency}
                 onChange={(event) => {
@@ -176,17 +219,12 @@ export default function EmployeeDetailPage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Department
+            </FormField>
+
+            <FormField label="Department">
               <select
                 value={form.department_id}
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    department_id: Number(event.target.value || 0),
-                  }))
-                }
+                onChange={(event) => setForm((prev) => ({ ...prev, department_id: Number(event.target.value || 0) }))}
               >
                 <option value={0}>Unassigned</option>
                 {departmentOptions.map((department) => (
@@ -197,9 +235,9 @@ export default function EmployeeDetailPage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Employee Settlement Account
+            </FormField>
+
+            <FormField label="Employee Settlement Account">
               <select
                 value={form.default_payout_account_id}
                 onChange={(event) => {
@@ -221,17 +259,12 @@ export default function EmployeeDetailPage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Funding Account (Default)
+            </FormField>
+
+            <FormField label="Funding Account (Default)">
               <select
                 value={form.default_funding_account_id}
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    default_funding_account_id: Number(event.target.value || 0),
-                  }))
-                }
+                onChange={(event) => setForm((prev) => ({ ...prev, default_funding_account_id: Number(event.target.value || 0) }))}
               >
                 <option value={0}>No default</option>
                 {accountOptions.map((account) => (
@@ -240,20 +273,18 @@ export default function EmployeeDetailPage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Base Salary (minor)
+            </FormField>
+
+            <FormField label="Base Salary (minor)">
               <input
                 type="number"
                 min={0}
                 value={form.base_salary_minor}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, base_salary_minor: Number(event.target.value || 0) }))
-                }
+                onChange={(event) => setForm((prev) => ({ ...prev, base_salary_minor: Number(event.target.value || 0) }))}
               />
-            </label>
-            <label>
-              Default Allowances (minor)
+            </FormField>
+
+            <FormField label="Default Allowances (minor)">
               <input
                 type="number"
                 min={0}
@@ -262,9 +293,9 @@ export default function EmployeeDetailPage() {
                   setForm((prev) => ({ ...prev, default_allowances_minor: Number(event.target.value || 0) }))
                 }
               />
-            </label>
-            <label>
-              Default Deductions (minor)
+            </FormField>
+
+            <FormField label="Default Deductions (minor)">
               <input
                 type="number"
                 min={0}
@@ -276,25 +307,29 @@ export default function EmployeeDetailPage() {
                   }))
                 }
               />
-            </label>
+            </FormField>
           </div>
+
           {settlementAccountOptions.length === 0 ? (
             <p className="error-text">
               No active cash account found for {form.payroll_currency}. Create one in Accounts first.
             </p>
           ) : null}
-          <label>
-            Notes
-            <textarea
-              value={form.notes}
-              onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-            />
-          </label>
-          <button className="primary-button" type="submit" disabled={saving}>
-            {saving ? 'Saving...' : 'Save Changes'}
-          </button>
+
+          <FormField label="Notes">
+            <textarea value={form.notes} onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))} />
+          </FormField>
+
+          <FormActions>
+            <button className="primary-button" type="submit" disabled={saving}>
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+            <button className="ghost-button" type="button" onClick={closeModal} disabled={saving}>
+              Cancel
+            </button>
+          </FormActions>
         </form>
-      ) : null}
+      </Modal>
 
       <div className="card table-wrap">
         <h3>Linked Timeline</h3>

@@ -1,11 +1,16 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { formatMinor, todayDate } from '@/lib/format';
+import { validateWithSchema } from '@/lib/validation';
 import type { Account, Employee, EmployeeLoan } from '@/lib/types';
+import { FormActions, FormField } from '@/components/ui/form-field';
+import { Modal } from '@/components/ui/modal';
+import { PageHeader } from '@/components/ui/page-header';
 
 type LoanForm = {
   employee_id: number;
@@ -58,6 +63,33 @@ const initialRepaymentForm: RepaymentForm = {
   amount_minor: 0,
   cash_account_id: 0,
 };
+
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format.');
+
+const createLoanSchema = z.object({
+  employee_id: z.number().int().positive('Employee is required.'),
+  currency: z.string().trim().length(3),
+  principal_minor: z.number().int().positive('Principal must be greater than 0.'),
+  annual_interest_bps: z.number().int().nonnegative('Interest cannot be negative.'),
+  installment_minor: z.number().int().positive('Installment must be greater than 0.'),
+  disbursement_account_id: z.number().int().positive('Disbursement account is required.'),
+  first_due_date: dateSchema,
+});
+
+const repaymentSchema = z.object({
+  loan_id: z.number().int().positive('Select a loan first.'),
+  repayment_date: dateSchema,
+  amount_minor: z.number().int().positive('Repayment amount must be greater than 0.'),
+  cash_account_id: z.number().int().positive('Cash account is required.'),
+});
+
+const disbursementSchema = z.object({
+  disbursement_date: dateSchema,
+  from_amount_minor: z.string().trim(),
+  fx_rate: z.string().trim(),
+  transfer_fee_amount_minor: z.string().trim(),
+  transfer_fee_description: z.string().max(500, 'Fee note cannot exceed 500 characters.'),
+});
 
 function makeInitialDisbursementForm(loan?: EmployeeLoan): LoanDisbursementForm {
   const sameCurrency =
@@ -203,6 +235,9 @@ export default function LoansPage() {
   const [repaymentForm, setRepaymentForm] = useState<RepaymentForm>(initialRepaymentForm);
   const [repaymentAmountTouched, setRepaymentAmountTouched] = useState(false);
   const [loanDisbursements, setLoanDisbursements] = useState<Record<number, LoanDisbursementForm>>({});
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isRepaymentModalOpen, setIsRepaymentModalOpen] = useState(false);
+  const [activeDisbursementLoanId, setActiveDisbursementLoanId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const cashAccounts = useMemo(
@@ -328,9 +363,54 @@ export default function LoansPage() {
     cashAccounts,
   ]);
 
+  const openCreateModal = () => {
+    setIsCreateModalOpen(true);
+  };
+
+  const closeCreateModal = () => {
+    setIsCreateModalOpen(false);
+    setCreateAndDisburse(false);
+    setCreateDisbursementForm(initialLoanDisbursementForm);
+  };
+
+  const openRepaymentModal = () => {
+    setIsRepaymentModalOpen(true);
+  };
+
+  const closeRepaymentModal = () => {
+    setIsRepaymentModalOpen(false);
+  };
+
+  const openDisbursementModal = (loan: EmployeeLoan) => {
+    setActiveDisbursementLoanId(loan.id);
+    setLoanDisbursements((previous) => ({
+      ...previous,
+      [loan.id]: previous[loan.id] || makeInitialDisbursementForm(loan),
+    }));
+  };
+
+  const closeDisbursementModal = () => {
+    setActiveDisbursementLoanId(null);
+  };
+
   const submitLoan = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token) return;
+
+    const parsedLoan = validateWithSchema(createLoanSchema, {
+      employee_id: Number(loanForm.employee_id),
+      currency: (selectedEmployee?.payroll_currency || loanForm.currency || 'USD').toUpperCase(),
+      principal_minor: Number(loanForm.principal_minor || 0),
+      annual_interest_bps: Number(loanForm.annual_interest_bps || 0),
+      installment_minor: Number(loanForm.installment_minor || 0),
+      disbursement_account_id: Number(loanForm.disbursement_account_id),
+      first_due_date: loanForm.first_due_date || todayDate(),
+    });
+
+    if (!parsedLoan.success) {
+      setError(parsedLoan.message);
+      return;
+    }
 
     if (
       createAndDisburse &&
@@ -381,8 +461,7 @@ export default function LoansPage() {
       }
 
       await load();
-      setCreateAndDisburse(false);
-      setCreateDisbursementForm(initialLoanDisbursementForm);
+      closeCreateModal();
       setError(null);
     } catch (submitError) {
       await load().catch(() => undefined);
@@ -411,6 +490,18 @@ export default function LoansPage() {
     const disbursementConfig = loanDisbursements[loan.id] || makeInitialDisbursementForm(loan);
     const sourceCurrency = loan.disbursement_account_currency || loan.currency;
     const isCrossCurrency = sourceCurrency !== loan.currency;
+    const parsedDisbursement = validateWithSchema(disbursementSchema, {
+      disbursement_date: disbursementConfig.disbursement_date || todayDate(),
+      from_amount_minor: disbursementConfig.from_amount_minor || '',
+      fx_rate: disbursementConfig.fx_rate || '',
+      transfer_fee_amount_minor: disbursementConfig.transfer_fee_amount_minor || '',
+      transfer_fee_description: disbursementConfig.transfer_fee_description || '',
+    });
+
+    if (!parsedDisbursement.success) {
+      setError(parsedDisbursement.message);
+      return;
+    }
 
     if (isCrossCurrency) {
       if (!disbursementConfig.from_amount_minor.trim() || !disbursementConfig.fx_rate.trim()) {
@@ -449,18 +540,31 @@ export default function LoansPage() {
     event.preventDefault();
     if (!token) return;
 
+    const parsedRepayment = validateWithSchema(repaymentSchema, {
+      loan_id: Number(repaymentForm.loan_id),
+      repayment_date: repaymentForm.repayment_date || todayDate(),
+      amount_minor: Number(repaymentForm.amount_minor || 0),
+      cash_account_id: Number(repaymentForm.cash_account_id),
+    });
+
+    if (!parsedRepayment.success) {
+      setError(parsedRepayment.message);
+      return;
+    }
+
     try {
-      await apiRequest(`/finance/loans/${repaymentForm.loan_id}/repay`, {
+      await apiRequest(`/finance/loans/${parsedRepayment.data.loan_id}/repay`, {
         token,
         method: 'POST',
         body: {
-          repayment_date: repaymentForm.repayment_date,
-          amount_minor: repaymentForm.amount_minor,
-          cash_account_id: repaymentForm.cash_account_id,
+          repayment_date: parsedRepayment.data.repayment_date,
+          amount_minor: parsedRepayment.data.amount_minor,
+          cash_account_id: parsedRepayment.data.cash_account_id,
         },
       });
       setRepaymentAmountTouched(false);
       await load();
+      closeRepaymentModal();
       setError(null);
     } catch (repayError) {
       setError(repayError instanceof Error ? repayError.message : 'Failed to post repayment');
@@ -485,373 +589,493 @@ export default function LoansPage() {
     : asNumber(loanForm.principal_minor);
   const createTransferFeeMinor = majorInputToMinor(createDisbursementForm.transfer_fee_amount_minor);
   const createTotalSourceDebitMinor = createSourceAmountMinor + createTransferFeeMinor;
+  const activeDisbursementLoan = loans.find((loan) => loan.id === Number(activeDisbursementLoanId)) || null;
+  const activeDisbursementForm = activeDisbursementLoan
+    ? loanDisbursements[activeDisbursementLoan.id] || makeInitialDisbursementForm(activeDisbursementLoan)
+    : initialLoanDisbursementForm;
+  const activeDisbursementSourceCurrency =
+    activeDisbursementLoan?.disbursement_account_currency || activeDisbursementLoan?.currency || 'USD';
+  const activeDisbursementIsCrossCurrency = activeDisbursementLoan
+    ? activeDisbursementSourceCurrency !== activeDisbursementLoan.currency
+    : false;
+  const activeDisbursementAction = activeDisbursementLoan
+    ? getLoanDisbursementAction(activeDisbursementLoan)
+    : null;
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">LOAN SUBLEDGER</p>
-          <h2>Employee Loans</h2>
-        </div>
-      </header>
+      <PageHeader
+        badge="LOAN SUBLEDGER"
+        title="Employee Loans"
+        subtitle="Manage disbursements, FX, fees, and repayments with linked ledger events."
+        actions={
+          <>
+            <button className="ghost-button" type="button" onClick={openRepaymentModal}>
+              Manual Repayment
+            </button>
+            <button className="primary-button" type="button" onClick={openCreateModal}>
+              Create Loan
+            </button>
+          </>
+        }
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      <form className="card" onSubmit={submitLoan}>
-        <h3>Create Loan</h3>
-        <div className="form-grid">
-          <label>
-            Employee
-            <select
-              value={loanForm.employee_id}
-              onChange={(event) => {
-                const employeeId = Number(event.target.value);
-                const employee = employees.find((entry) => entry.id === employeeId);
-                const payout = accounts.find((entry) => entry.id === employee?.default_payout_account_id);
-                setLoanForm((prev) => ({
-                  ...prev,
-                  employee_id: employeeId,
-                  currency: employee?.payroll_currency || prev.currency,
-                  disbursement_account_id: payout?.id || prev.disbursement_account_id,
-                }));
-              }}
-            >
-              {employees
-                .filter((employee) => employee.status === 'ACTIVE')
-                .map((employee) => (
-                  <option key={employee.id} value={employee.id}>
-                    {employee.employee_code} - {employee.full_name}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <label>
-            Currency
-            <input value={selectedEmployee?.payroll_currency || loanForm.currency} disabled />
-          </label>
-          <label>
-            Disbursement Account
-            <select
-              value={loanForm.disbursement_account_id}
-              onChange={(event) =>
-                setLoanForm((prev) => ({ ...prev, disbursement_account_id: Number(event.target.value) }))
-              }
-            >
-              {cashAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name} ({account.currency})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Principal ({loanCurrency})
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={minorToMajorInput(loanForm.principal_minor)}
-              onChange={(event) =>
-                setLoanForm((prev) => ({
-                  ...prev,
-                  principal_minor: majorInputToMinor(event.target.value),
-                }))
-              }
-              placeholder="0.00"
-              required
-            />
-          </label>
-          <label>
-            Installment ({loanCurrency})
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={minorToMajorInput(loanForm.installment_minor)}
-              onChange={(event) =>
-                setLoanForm((prev) => ({
-                  ...prev,
-                  installment_minor: majorInputToMinor(event.target.value),
-                }))
-              }
-              placeholder="0.00"
-              required
-            />
-          </label>
-          <label>
-            Annual Interest (bps)
-            <input
-              type="number"
-              min={0}
-              value={loanForm.annual_interest_bps || ''}
-              onChange={(event) =>
-                setLoanForm((prev) => ({ ...prev, annual_interest_bps: Number(event.target.value || 0) }))
-              }
-              placeholder="0"
-            />
-          </label>
-          <label>
-            First Due Date
-            <input
-              type="date"
-              value={loanForm.first_due_date}
-              onChange={(event) => setLoanForm((prev) => ({ ...prev, first_due_date: event.target.value }))}
-            />
-          </label>
-          <div
-            style={{
-              gridColumn: '1 / -1',
-              border: '1px solid var(--line)',
-              borderRadius: 10,
-              padding: '0.75rem',
-              display: 'grid',
-              gap: '0.55rem',
-            }}
-          >
-            <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', color: 'var(--text)' }}>
-              <input
-                type="checkbox"
-                checked={createAndDisburse}
+      <Modal open={isCreateModalOpen} onClose={closeCreateModal} title="Create Loan" size="lg">
+        <form className="page" onSubmit={submitLoan}>
+          <div className="form-grid">
+            <FormField label="Employee">
+              <select
+                value={loanForm.employee_id}
                 onChange={(event) => {
-                  const checked = event.target.checked;
-                  setCreateAndDisburse(checked);
-                  if (!checked) return;
-                  setCreateDisbursementForm((prev) => ({
+                  const employeeId = Number(event.target.value);
+                  const employee = employees.find((entry) => entry.id === employeeId);
+                  const payout = accounts.find((entry) => entry.id === employee?.default_payout_account_id);
+                  setLoanForm((prev) => ({
                     ...prev,
-                    disbursement_date: prev.disbursement_date || todayDate(),
-                    from_amount_minor:
-                      !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
-                        ? minorToMajorInput(loanForm.principal_minor)
-                        : prev.from_amount_minor,
-                    fx_rate: !createDisbursementIsCrossCurrency ? '' : prev.fx_rate,
+                    employee_id: employeeId,
+                    currency: employee?.payroll_currency || prev.currency,
+                    disbursement_account_id: payout?.id || prev.disbursement_account_id,
                   }));
                 }}
+              >
+                {employees
+                  .filter((employee) => employee.status === 'ACTIVE')
+                  .map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.employee_code} - {employee.full_name}
+                    </option>
+                  ))}
+              </select>
+            </FormField>
+
+            <FormField label="Currency">
+              <input value={selectedEmployee?.payroll_currency || loanForm.currency} disabled />
+            </FormField>
+
+            <FormField label="Disbursement Account">
+              <select
+                value={loanForm.disbursement_account_id}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({ ...prev, disbursement_account_id: Number(event.target.value) }))
+                }
+              >
+                {cashAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} ({account.currency})
+                  </option>
+                ))}
+              </select>
+            </FormField>
+
+            <FormField label={`Principal (${loanCurrency})`}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={minorToMajorInput(loanForm.principal_minor)}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({
+                    ...prev,
+                    principal_minor: majorInputToMinor(event.target.value),
+                  }))
+                }
+                placeholder="0.00"
+                required
               />
-              Disburse immediately after loan creation
-            </label>
-            <p style={{ margin: 0, color: 'var(--muted)' }}>
-              Conversion path: {createDisbursementSourceCurrency} funding account {'->'} {loanCurrency} loan
-              receivable account.
-            </p>
-            {createAndDisburse ? (
-              <div className="form-grid">
-                <label>
-                  Disbursement Date
-                  <input
-                    type="date"
-                    value={createDisbursementForm.disbursement_date}
-                    onChange={(event) =>
-                      setCreateDisbursementForm((prev) => ({ ...prev, disbursement_date: event.target.value }))
-                    }
-                  />
-                </label>
-                <label>
-                  Source Amount Debited ({createDisbursementSourceCurrency})
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={createDisbursementForm.from_amount_minor}
-                    placeholder={
-                      !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
-                        ? minorToMajorInput(loanForm.principal_minor)
-                        : ''
-                    }
-                    onChange={(event) =>
-                      setCreateDisbursementForm((prev) => ({ ...prev, from_amount_minor: event.target.value }))
-                    }
-                  />
-                </label>
-                {createDisbursementIsCrossCurrency ? (
-                  <label>
-                    Conversion Rate ({createDisbursementSourceCurrency} {'->'} {loanCurrency})
+            </FormField>
+
+            <FormField label={`Installment (${loanCurrency})`}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={minorToMajorInput(loanForm.installment_minor)}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({
+                    ...prev,
+                    installment_minor: majorInputToMinor(event.target.value),
+                  }))
+                }
+                placeholder="0.00"
+                required
+              />
+            </FormField>
+
+            <FormField label="Annual Interest (bps)">
+              <input
+                type="number"
+                min={0}
+                value={loanForm.annual_interest_bps || ''}
+                onChange={(event) =>
+                  setLoanForm((prev) => ({ ...prev, annual_interest_bps: Number(event.target.value || 0) }))
+                }
+                placeholder="0"
+              />
+            </FormField>
+
+            <FormField label="First Due Date">
+              <input
+                type="date"
+                value={loanForm.first_due_date}
+                onChange={(event) => setLoanForm((prev) => ({ ...prev, first_due_date: event.target.value }))}
+              />
+            </FormField>
+
+            <div
+              style={{
+                gridColumn: '1 / -1',
+                border: '1px solid var(--line)',
+                borderRadius: 10,
+                padding: '0.75rem',
+                display: 'grid',
+                gap: '0.55rem',
+              }}
+            >
+              <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', color: 'var(--text)' }}>
+                <input
+                  type="checkbox"
+                  checked={createAndDisburse}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setCreateAndDisburse(checked);
+                    if (!checked) return;
+                    setCreateDisbursementForm((prev) => ({
+                      ...prev,
+                      disbursement_date: prev.disbursement_date || todayDate(),
+                      from_amount_minor:
+                        !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
+                          ? minorToMajorInput(loanForm.principal_minor)
+                          : prev.from_amount_minor,
+                      fx_rate: !createDisbursementIsCrossCurrency ? '' : prev.fx_rate,
+                    }));
+                  }}
+                />
+                Disburse immediately after loan creation
+              </label>
+              <p style={{ margin: 0, color: 'var(--muted)' }}>
+                Conversion path: {createDisbursementSourceCurrency} funding account {'->'} {loanCurrency} loan
+                receivable account.
+              </p>
+              {createAndDisburse ? (
+                <div className="form-grid">
+                  <FormField label="Disbursement Date">
+                    <input
+                      type="date"
+                      value={createDisbursementForm.disbursement_date}
+                      onChange={(event) =>
+                        setCreateDisbursementForm((prev) => ({ ...prev, disbursement_date: event.target.value }))
+                      }
+                    />
+                  </FormField>
+                  <FormField label={`Source Amount Debited (${createDisbursementSourceCurrency})`}>
                     <input
                       type="number"
                       min={0}
-                      step="0.000001"
-                      value={createDisbursementForm.fx_rate}
-                      onChange={(event) =>
-                        setCreateDisbursementForm((prev) => ({ ...prev, fx_rate: event.target.value }))
+                      step="0.01"
+                      value={createDisbursementForm.from_amount_minor}
+                      placeholder={
+                        !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
+                          ? minorToMajorInput(loanForm.principal_minor)
+                          : ''
                       }
-                      required
+                      onChange={(event) =>
+                        setCreateDisbursementForm((prev) => ({ ...prev, from_amount_minor: event.target.value }))
+                      }
                     />
-                  </label>
-                ) : (
-                  <label>
-                    FX Rate
-                    <input value="1 (same currency)" disabled />
-                  </label>
-                )}
-                <label>
-                  Transaction Fee ({createDisbursementSourceCurrency}, deducted from source)
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={createDisbursementForm.transfer_fee_amount_minor}
-                    onChange={(event) =>
-                      setCreateDisbursementForm((prev) => ({
-                        ...prev,
-                        transfer_fee_amount_minor: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Fee Description (optional)
-                  <input
-                    value={createDisbursementForm.transfer_fee_description}
-                    onChange={(event) =>
-                      setCreateDisbursementForm((prev) => ({
-                        ...prev,
-                        transfer_fee_description: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                {createDisbursementPreviewRate ? (
+                  </FormField>
+                  {createDisbursementIsCrossCurrency ? (
+                    <FormField label={`Conversion Rate (${createDisbursementSourceCurrency} -> ${loanCurrency})`}>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.000001"
+                        value={createDisbursementForm.fx_rate}
+                        onChange={(event) =>
+                          setCreateDisbursementForm((prev) => ({ ...prev, fx_rate: event.target.value }))
+                        }
+                        required
+                      />
+                    </FormField>
+                  ) : (
+                    <FormField label="FX Rate">
+                      <input value="1 (same currency)" disabled />
+                    </FormField>
+                  )}
+                  <FormField label={`Transaction Fee (${createDisbursementSourceCurrency}, deducted from source)`}>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={createDisbursementForm.transfer_fee_amount_minor}
+                      onChange={(event) =>
+                        setCreateDisbursementForm((prev) => ({
+                          ...prev,
+                          transfer_fee_amount_minor: event.target.value,
+                        }))
+                      }
+                    />
+                  </FormField>
+                  <FormField label="Fee Description (optional)">
+                    <input
+                      value={createDisbursementForm.transfer_fee_description}
+                      onChange={(event) =>
+                        setCreateDisbursementForm((prev) => ({
+                          ...prev,
+                          transfer_fee_description: event.target.value,
+                        }))
+                      }
+                    />
+                  </FormField>
+                  {createDisbursementPreviewRate ? (
+                    <p style={{ margin: 0, color: 'var(--muted)' }}>
+                      Implied FX from amounts: {createDisbursementPreviewRate.toFixed(6)} {loanCurrency}/
+                      {createDisbursementSourceCurrency}
+                    </p>
+                  ) : null}
                   <p style={{ margin: 0, color: 'var(--muted)' }}>
-                    Implied FX from amounts: {createDisbursementPreviewRate.toFixed(6)} {loanCurrency}/
-                    {createDisbursementSourceCurrency}
+                    Ledger preview: OUT {formatMinor(createTotalSourceDebitMinor, createDisbursementSourceCurrency)} from{' '}
+                    {selectedDisbursementAccount?.name || 'source account'} (includes fee), IN{' '}
+                    {formatMinor(asNumber(loanForm.principal_minor), loanCurrency)} to loan receivable account.
                   </p>
-                ) : null}
-                <p style={{ margin: 0, color: 'var(--muted)' }}>
-                  Ledger preview: OUT {formatMinor(createTotalSourceDebitMinor, createDisbursementSourceCurrency)} from{' '}
-                  {selectedDisbursementAccount?.name || 'source account'} (includes fee), IN{' '}
-                  {formatMinor(asNumber(loanForm.principal_minor), loanCurrency)} to loan receivable account.
-                </p>
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-        <p>
-          Cross-currency loans require source amount + FX rate on disbursement. Transfer fee is company expense and
-          is not added to employee principal.
-        </p>
-        <button className="primary-button" type="submit">
-          {createAndDisburse ? 'Create Loan + Disburse' : 'Create Loan'}
-        </button>
-      </form>
+          <p>
+            Cross-currency loans require source amount + FX rate on disbursement. Transfer fee is company expense and
+            is not added to employee principal.
+          </p>
+          <FormActions>
+            <button className="primary-button" type="submit">
+              {createAndDisburse ? 'Create Loan + Disburse' : 'Create Loan'}
+            </button>
+            <button className="ghost-button" type="button" onClick={closeCreateModal}>
+              Cancel
+            </button>
+          </FormActions>
+        </form>
+      </Modal>
 
-      <form className="card" onSubmit={submitRepayment}>
-        <h3>Manual Repayment</h3>
-        <div className="form-grid">
-          <label>
-            Loan
-            <select
-              value={repaymentForm.loan_id}
-              onChange={(event) => setRepaymentForm((prev) => ({ ...prev, loan_id: Number(event.target.value) }))}
-            >
-              <option value={0}>Select Loan</option>
-              {loans
-                .filter((loan) => loan.status === 'ACTIVE')
-                .map((loan) => (
-                  <option key={loan.id} value={loan.id}>
-                    #{loan.id} - {loan.full_name || `Employee ${loan.employee_id}`}
+      <Modal open={isRepaymentModalOpen} onClose={closeRepaymentModal} title="Manual Repayment" size="lg">
+        <form className="page" onSubmit={submitRepayment}>
+          <div className="form-grid">
+            <FormField label="Loan">
+              <select
+                value={repaymentForm.loan_id}
+                onChange={(event) => setRepaymentForm((prev) => ({ ...prev, loan_id: Number(event.target.value) }))}
+              >
+                <option value={0}>Select Loan</option>
+                {loans
+                  .filter((loan) => loan.status === 'ACTIVE')
+                  .map((loan) => (
+                    <option key={loan.id} value={loan.id}>
+                      #{loan.id} - {loan.full_name || `Employee ${loan.employee_id}`}
+                    </option>
+                  ))}
+              </select>
+            </FormField>
+
+            <FormField label="Repayment Date">
+              <input
+                type="date"
+                value={repaymentForm.repayment_date}
+                onChange={(event) => setRepaymentForm((prev) => ({ ...prev, repayment_date: event.target.value }))}
+              />
+            </FormField>
+
+            <FormField label="Cash Account">
+              <select
+                value={repaymentForm.cash_account_id}
+                onChange={(event) => setRepaymentForm((prev) => ({ ...prev, cash_account_id: Number(event.target.value) }))}
+              >
+                {cashAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} ({account.currency})
                   </option>
                 ))}
-            </select>
-          </label>
-          <label>
-            Repayment Date
-            <input
-              type="date"
-              value={repaymentForm.repayment_date}
-              onChange={(event) =>
-                setRepaymentForm((prev) => ({ ...prev, repayment_date: event.target.value }))
-              }
-            />
-          </label>
-          <label>
-            Cash Account
-            <select
-              value={repaymentForm.cash_account_id}
-              onChange={(event) =>
-                setRepaymentForm((prev) => ({ ...prev, cash_account_id: Number(event.target.value) }))
-              }
-            >
-              {cashAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name} ({account.currency})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Amount ({selectedRepaymentLoan?.currency || selectedRepaymentAccount?.currency || 'Currency'})
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={minorToMajorInput(repaymentForm.amount_minor)}
-              onChange={(event) =>
-                {
+              </select>
+            </FormField>
+
+            <FormField label={`Amount (${selectedRepaymentLoan?.currency || selectedRepaymentAccount?.currency || 'Currency'})`}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={minorToMajorInput(repaymentForm.amount_minor)}
+                onChange={(event) => {
                   const enteredMinor = majorInputToMinor(event.target.value);
                   const cappedAmount = selectedRepaymentLoan
                     ? Math.max(0, Math.min(enteredMinor, repaymentOutstandingMinor))
                     : Math.max(0, enteredMinor);
                   setRepaymentAmountTouched(true);
                   setRepaymentForm((prev) => ({ ...prev, amount_minor: cappedAmount }));
-                }
-              }
-              placeholder="0.00"
-              required
-            />
-          </label>
+                }}
+                placeholder="0.00"
+                required
+              />
+            </FormField>
           </div>
-        {selectedRepaymentLoan ? (
-          <div style={{ display: 'grid', gap: 8 }}>
-            <small style={{ color: 'var(--muted)' }}>
-              Outstanding: {formatMinor(repaymentOutstandingMinor, selectedRepaymentLoan.currency)} | Suggested now:{' '}
-              {formatMinor(repaymentSuggestedMinor, selectedRepaymentLoan.currency)} | Remaining after this payment:{' '}
-              {formatMinor(repaymentRemainingMinor, selectedRepaymentLoan.currency)}
-            </small>
-            {repaymentAccountCurrencyMismatch ? (
-              <small className="error-text">
-                Selected cash account currency ({selectedRepaymentAccount?.currency}) must match loan currency (
-                {selectedRepaymentLoan.currency}).
+          {selectedRepaymentLoan ? (
+            <div style={{ display: 'grid', gap: 8 }}>
+              <small style={{ color: 'var(--muted)' }}>
+                Outstanding: {formatMinor(repaymentOutstandingMinor, selectedRepaymentLoan.currency)} | Suggested now:{' '}
+                {formatMinor(repaymentSuggestedMinor, selectedRepaymentLoan.currency)} | Remaining after this payment:{' '}
+                {formatMinor(repaymentRemainingMinor, selectedRepaymentLoan.currency)}
               </small>
-            ) : null}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => {
-                  setRepaymentAmountTouched(false);
-                  setRepaymentForm((prev) => ({ ...prev, amount_minor: repaymentSuggestedMinor }));
-                }}
-              >
-                Use Suggested Amount
-              </button>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => {
-                  setRepaymentAmountTouched(true);
-                  setRepaymentForm((prev) => ({ ...prev, amount_minor: repaymentOutstandingMinor }));
-                }}
-              >
-                Pay Full Outstanding
-              </button>
+              {repaymentAccountCurrencyMismatch ? (
+                <small className="error-text">
+                  Selected cash account currency ({selectedRepaymentAccount?.currency}) must match loan currency (
+                  {selectedRepaymentLoan.currency}).
+                </small>
+              ) : null}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => {
+                    setRepaymentAmountTouched(false);
+                    setRepaymentForm((prev) => ({ ...prev, amount_minor: repaymentSuggestedMinor }));
+                  }}
+                >
+                  Use Suggested Amount
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => {
+                    setRepaymentAmountTouched(true);
+                    setRepaymentForm((prev) => ({ ...prev, amount_minor: repaymentOutstandingMinor }));
+                  }}
+                >
+                  Pay Full Outstanding
+                </button>
+              </div>
             </div>
+          ) : (
+            <small style={{ color: 'var(--muted)' }}>
+              Select an active loan to auto-fill repayment amount and show remaining balance.
+            </small>
+          )}
+          <FormActions>
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={
+                !repaymentForm.loan_id
+                || Number(repaymentForm.amount_minor || 0) <= 0
+                || repaymentAccountCurrencyMismatch
+              }
+            >
+              Post Repayment
+            </button>
+            <button className="ghost-button" type="button" onClick={closeRepaymentModal}>
+              Cancel
+            </button>
+          </FormActions>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(activeDisbursementLoan)}
+        onClose={closeDisbursementModal}
+        title={
+          activeDisbursementLoan
+            ? `Disbursement Setup - Loan #${activeDisbursementLoan.id}`
+            : 'Disbursement Setup'
+        }
+        size="md"
+      >
+        {activeDisbursementLoan ? (
+          <div className="page">
+            <div className="form-grid">
+              <FormField label="Disbursement Date">
+                <input
+                  type="date"
+                  value={activeDisbursementForm.disbursement_date}
+                  onChange={(event) =>
+                    setDisbursementInput(activeDisbursementLoan.id, { disbursement_date: event.target.value })
+                  }
+                  disabled={!activeDisbursementAction?.canDisburse}
+                />
+              </FormField>
+
+              {activeDisbursementIsCrossCurrency ? (
+                <>
+                  <FormField label={`Source Amount (${activeDisbursementSourceCurrency})`}>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={activeDisbursementForm.from_amount_minor}
+                      onChange={(event) =>
+                        setDisbursementInput(activeDisbursementLoan.id, { from_amount_minor: event.target.value })
+                      }
+                      disabled={!activeDisbursementAction?.canDisburse}
+                    />
+                  </FormField>
+                  <FormField label={`FX Rate (${activeDisbursementSourceCurrency} -> ${activeDisbursementLoan.currency})`}>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.000001"
+                      value={activeDisbursementForm.fx_rate}
+                      onChange={(event) =>
+                        setDisbursementInput(activeDisbursementLoan.id, { fx_rate: event.target.value })
+                      }
+                      disabled={!activeDisbursementAction?.canDisburse}
+                    />
+                  </FormField>
+                </>
+              ) : (
+                <FormField label="FX Rate">
+                  <input value="1 (same currency)" disabled />
+                </FormField>
+              )}
+
+              <FormField label={`Transfer Fee (${activeDisbursementSourceCurrency})`}>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={activeDisbursementForm.transfer_fee_amount_minor}
+                  onChange={(event) =>
+                    setDisbursementInput(activeDisbursementLoan.id, { transfer_fee_amount_minor: event.target.value })
+                  }
+                  disabled={!activeDisbursementAction?.canDisburse}
+                />
+              </FormField>
+
+              <FormField label="Fee Note (optional)">
+                <input
+                  value={activeDisbursementForm.transfer_fee_description}
+                  onChange={(event) =>
+                    setDisbursementInput(activeDisbursementLoan.id, { transfer_fee_description: event.target.value })
+                  }
+                  disabled={!activeDisbursementAction?.canDisburse}
+                />
+              </FormField>
+            </div>
+
+            {activeDisbursementAction?.hint ? <small className="muted-text">{activeDisbursementAction.hint}</small> : null}
+
+            <FormActions>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => disburse(activeDisbursementLoan)}
+                disabled={!activeDisbursementAction?.canDisburse}
+              >
+                {activeDisbursementAction?.label || 'Disburse'}
+              </button>
+              <button className="ghost-button" type="button" onClick={closeDisbursementModal}>
+                Close
+              </button>
+            </FormActions>
           </div>
-        ) : (
-          <small style={{ color: 'var(--muted)' }}>
-            Select an active loan to auto-fill repayment amount and show remaining balance.
-          </small>
-        )}
-        <button
-          className="primary-button"
-          type="submit"
-          disabled={
-            !repaymentForm.loan_id
-            || Number(repaymentForm.amount_minor || 0) <= 0
-            || repaymentAccountCurrencyMismatch
-          }
-        >
-          Post Repayment
-        </button>
-      </form>
+        ) : null}
+      </Modal>
 
       <div className="card table-wrap">
         <table className="table">
@@ -876,7 +1100,6 @@ export default function LoansPage() {
               const isCrossCurrency = sourceCurrency !== loan.currency;
               const disbursementAction = getLoanDisbursementAction(loan);
               const canDisburse = disbursementAction.canDisburse;
-              const rowDisabled = !canDisburse;
 
               return (
                 <tr key={loan.id}>
@@ -893,76 +1116,36 @@ export default function LoansPage() {
                     <br />
                     Receivable: {loan.receivable_control_account_name || '-'} ({loan.currency})
                   </td>
-                  <td style={{ minWidth: 320 }}>
-                    <div style={{ display: 'grid', gap: 6 }}>
-                      <input
-                        type="date"
-                        value={disbursement.disbursement_date}
-                        onChange={(event) =>
-                          setDisbursementInput(loan.id, { disbursement_date: event.target.value })
-                        }
-                        disabled={rowDisabled}
-                      />
-                      {isCrossCurrency ? (
-                        <>
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            placeholder={`Source amount (${sourceCurrency})`}
-                            value={disbursement.from_amount_minor}
-                            onChange={(event) =>
-                              setDisbursementInput(loan.id, { from_amount_minor: event.target.value })
-                            }
-                            disabled={rowDisabled}
-                          />
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.000001"
-                            placeholder="FX rate"
-                            value={disbursement.fx_rate}
-                            onChange={(event) =>
-                              setDisbursementInput(loan.id, { fx_rate: event.target.value })
-                            }
-                            disabled={rowDisabled}
-                          />
-                        </>
-                      ) : (
-                        <span>Same currency disbursement</span>
-                      )}
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder={`Transfer fee (${sourceCurrency})`}
-                        value={disbursement.transfer_fee_amount_minor}
-                        onChange={(event) =>
-                          setDisbursementInput(loan.id, { transfer_fee_amount_minor: event.target.value })
-                        }
-                        disabled={rowDisabled}
-                      />
-                      <input
-                        placeholder="Fee note (optional)"
-                        value={disbursement.transfer_fee_description}
-                        onChange={(event) =>
-                          setDisbursementInput(loan.id, { transfer_fee_description: event.target.value })
-                        }
-                        disabled={rowDisabled}
-                      />
+                  <td>
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <small className="muted-text">Date: {disbursement.disbursement_date || '-'}</small>
+                      <small className="muted-text">
+                        Source: {disbursement.from_amount_minor || '-'} {sourceCurrency}
+                      </small>
+                      <small className="muted-text">
+                        FX: {isCrossCurrency ? disbursement.fx_rate || '-' : '1 (same currency)'}
+                      </small>
+                      <small className="muted-text">
+                        Fee: {disbursement.transfer_fee_amount_minor || '-'} {sourceCurrency}
+                      </small>
                     </div>
                   </td>
                   <td>{loan.disbursement_date || '-'}</td>
                   <td>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => disburse(loan)}
-                      disabled={!canDisburse}
-                      title={disbursementAction.hint || undefined}
-                    >
-                      {disbursementAction.label}
-                    </button>
+                    <div className="table-actions">
+                      <button className="ghost-button" type="button" onClick={() => openDisbursementModal(loan)}>
+                        Configure
+                      </button>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => disburse(loan)}
+                        disabled={!canDisburse}
+                        title={disbursementAction.hint || undefined}
+                      >
+                        {disbursementAction.label}
+                      </button>
+                    </div>
                     {disbursementAction.hint ? (
                       <small style={{ display: 'block', marginTop: 6, color: 'var(--muted)' }}>
                         {disbursementAction.hint}

@@ -4,7 +4,7 @@ module.exports = {
   routes: [
     { method: 'GET', path: '/finance/health', handler: 'finance.health', config: { auth: false } },
     { method: 'GET', path: '/finance/health/db', handler: 'finance.healthDb', config: { auth: false } },
-    { method: 'GET', path: '/finance/health/models', handler: 'finance.healthModels', config: { auth: false } },
+    { method: 'GET', path: '/finance/health/models', handler: 'finance.healthModels' },
 
     { method: 'GET', path: '/finance/me', handler: 'finance.me' },
 

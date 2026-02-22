@@ -1,10 +1,15 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { Category, Department } from '@/lib/types';
+import { validateWithSchema } from '@/lib/validation';
+import { FormActions, FormField } from '@/components/ui/form-field';
+import { Modal } from '@/components/ui/modal';
+import { PageHeader } from '@/components/ui/page-header';
 
 type SettingsPayload = {
   base_currency: string;
@@ -12,6 +17,24 @@ type SettingsPayload = {
   web_entry_default_status: 'APPROVED' | 'PENDING';
   allow_self_approval: boolean;
 };
+
+const settingsSchema = z.object({
+  base_currency: z.string().trim().min(3, 'Base currency is required.').max(3, 'Use a 3-letter currency code.'),
+  timezone: z.string().trim().min(1, 'Timezone is required.'),
+  web_entry_default_status: z.enum(['APPROVED', 'PENDING']),
+  allow_self_approval: z.boolean(),
+});
+
+const categorySchema = z.object({
+  name: z.string().trim().min(1, 'Category name is required.').max(80, 'Category name is too long.'),
+  type: z.enum(['INCOME', 'EXPENSE', 'BOTH']),
+});
+
+const departmentSchema = z.object({
+  name: z.string().trim().min(1, 'Department name is required.').max(120, 'Department name is too long.'),
+  code: z.string().trim().max(32, 'Code cannot exceed 32 characters.'),
+  is_active: z.boolean(),
+});
 
 export default function SettingsPage() {
   const { token, refreshMe } = useAuth();
@@ -34,9 +57,10 @@ export default function SettingsPage() {
   const [categoriesBusy, setCategoriesBusy] = useState(false);
 
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [departmentForm, setDepartmentForm] = useState<{ name: string; code: string }>({
+  const [departmentForm, setDepartmentForm] = useState<{ name: string; code: string; is_active: boolean }>({
     name: '',
     code: '',
+    is_active: true,
   });
   const [editingDepartment, setEditingDepartment] = useState<{
     id: number;
@@ -45,6 +69,11 @@ export default function SettingsPage() {
     is_active: boolean;
   } | null>(null);
   const [departmentsBusy, setDepartmentsBusy] = useState(false);
+
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [isDepartmentModalOpen, setIsDepartmentModalOpen] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -78,17 +107,47 @@ export default function SettingsPage() {
     setDepartments(departmentPayload);
   };
 
+  const closeSettingsModal = () => {
+    setIsSettingsModalOpen(false);
+  };
+
+  const closeCategoryModal = () => {
+    setIsCategoryModalOpen(false);
+    setEditingCategory(null);
+    setCategoryForm({ name: '', type: 'EXPENSE' });
+  };
+
+  const closeDepartmentModal = () => {
+    setIsDepartmentModalOpen(false);
+    setEditingDepartment(null);
+    setDepartmentForm({ name: '', code: '', is_active: true });
+  };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token) return;
+
+    const parsed = validateWithSchema(settingsSchema, {
+      ...form,
+      base_currency: form.base_currency,
+      timezone: form.timezone,
+      web_entry_default_status: form.web_entry_default_status,
+      allow_self_approval: Boolean(form.allow_self_approval),
+    });
+
+    if (!parsed.success) {
+      setError(parsed.message);
+      return;
+    }
 
     try {
       await apiRequest('/finance/settings', {
         token,
         method: 'PATCH',
-        body: form,
+        body: parsed.data,
       });
       await refreshMe();
+      closeSettingsModal();
       setSaved('Settings updated.');
       setError(null);
     } catch (saveError) {
@@ -101,28 +160,38 @@ export default function SettingsPage() {
     event.preventDefault();
     if (!token) return;
 
-    const name = categoryForm.name.trim();
-    if (!name) {
-      setError('Category name is required.');
+    const parsed = validateWithSchema(categorySchema, {
+      name: editingCategory ? editingCategory.name : categoryForm.name,
+      type: editingCategory ? editingCategory.type : categoryForm.type,
+    });
+
+    if (!parsed.success) {
+      setError(parsed.message);
       return;
     }
 
     try {
       setCategoriesBusy(true);
-      await apiRequest('/finance/categories', {
-        token,
-        method: 'POST',
-        body: {
-          name,
-          type: categoryForm.type,
-        },
-      });
-      setCategoryForm({ name: '', type: categoryForm.type });
+      if (editingCategory) {
+        await apiRequest(`/finance/categories/${editingCategory.id}`, {
+          token,
+          method: 'PATCH',
+          body: parsed.data,
+        });
+        setSaved('Category updated.');
+      } else {
+        await apiRequest('/finance/categories', {
+          token,
+          method: 'POST',
+          body: parsed.data,
+        });
+        setSaved('Category created.');
+      }
+      closeCategoryModal();
       await reloadCategories();
-      setSaved('Category created.');
       setError(null);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Failed to create category');
+      setError(saveError instanceof Error ? saveError.message : 'Failed to save category');
       setSaved(null);
     } finally {
       setCategoriesBusy(false);
@@ -131,6 +200,9 @@ export default function SettingsPage() {
 
   const deleteCategory = async (categoryId: number) => {
     if (!token) return;
+
+    const confirmed = window.confirm('Delete this category?');
+    if (!confirmed) return;
 
     try {
       setCategoriesBusy(true);
@@ -149,97 +221,51 @@ export default function SettingsPage() {
     }
   };
 
-  const saveCategoryEdit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!token || !editingCategory) return;
-
-    const name = editingCategory.name.trim();
-    if (!name) {
-      setError('Category name is required.');
-      return;
-    }
-
-    try {
-      setCategoriesBusy(true);
-      await apiRequest(`/finance/categories/${editingCategory.id}`, {
-        token,
-        method: 'PATCH',
-        body: {
-          name,
-          type: editingCategory.type,
-        },
-      });
-      await reloadCategories();
-      setEditingCategory(null);
-      setSaved('Category updated.');
-      setError(null);
-    } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : 'Failed to update category');
-      setSaved(null);
-    } finally {
-      setCategoriesBusy(false);
-    }
-  };
-
   const submitDepartment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token) return;
 
-    const name = departmentForm.name.trim();
-    if (!name) {
-      setError('Department name is required.');
+    const parsed = validateWithSchema(departmentSchema, {
+      name: editingDepartment ? editingDepartment.name : departmentForm.name,
+      code: editingDepartment ? editingDepartment.code : departmentForm.code,
+      is_active: editingDepartment ? editingDepartment.is_active : departmentForm.is_active,
+    });
+
+    if (!parsed.success) {
+      setError(parsed.message);
       return;
     }
 
     try {
       setDepartmentsBusy(true);
-      await apiRequest('/finance/departments', {
-        token,
-        method: 'POST',
-        body: {
-          name,
-          code: departmentForm.code.trim() || null,
-        },
-      });
-      setDepartmentForm({ name: '', code: '' });
+      if (editingDepartment) {
+        await apiRequest(`/finance/departments/${editingDepartment.id}`, {
+          token,
+          method: 'PATCH',
+          body: {
+            name: parsed.data.name,
+            code: parsed.data.code || null,
+            is_active: parsed.data.is_active,
+          },
+        });
+        setSaved('Department updated.');
+      } else {
+        await apiRequest('/finance/departments', {
+          token,
+          method: 'POST',
+          body: {
+            name: parsed.data.name,
+            code: parsed.data.code || null,
+          },
+        });
+        setSaved('Department created.');
+      }
+
+      closeDepartmentModal();
       await reloadDepartments();
-      setSaved('Department created.');
       setError(null);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Failed to create department');
-      setSaved(null);
-    } finally {
-      setDepartmentsBusy(false);
-    }
-  };
-
-  const saveDepartmentEdit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!token || !editingDepartment) return;
-
-    const name = editingDepartment.name.trim();
-    if (!name) {
-      setError('Department name is required.');
-      return;
-    }
-
-    try {
-      setDepartmentsBusy(true);
-      await apiRequest(`/finance/departments/${editingDepartment.id}`, {
-        token,
-        method: 'PATCH',
-        body: {
-          name,
-          code: editingDepartment.code.trim() || null,
-          is_active: editingDepartment.is_active,
-        },
-      });
-      setEditingDepartment(null);
-      await reloadDepartments();
-      setSaved('Department updated.');
-      setError(null);
-    } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : 'Failed to update department');
+      setError(saveError instanceof Error ? saveError.message : 'Failed to save department');
       setSaved(null);
     } finally {
       setDepartmentsBusy(false);
@@ -248,6 +274,9 @@ export default function SettingsPage() {
 
   const deleteDepartment = async (departmentId: number) => {
     if (!token) return;
+
+    const confirmed = window.confirm('Delete this department?');
+    if (!confirmed) return;
 
     try {
       setDepartmentsBusy(true);
@@ -269,75 +298,80 @@ export default function SettingsPage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">WORKSPACE CONFIG</p>
-          <h2>Settings</h2>
-        </div>
-      </header>
+      <PageHeader
+        badge="WORKSPACE CONFIG"
+        title="Settings"
+        subtitle="Configure workspace behavior, categories, departments, and Slack setup."
+        actions={
+          <button className="primary-button" type="button" onClick={() => setIsSettingsModalOpen(true)}>
+            Edit Workspace Defaults
+          </button>
+        }
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
-      {saved ? <p>{saved}</p> : null}
+      {saved ? <p className="success-text">{saved}</p> : null}
 
-      <form className="card" onSubmit={submit}>
-        <h3>Global Defaults</h3>
-        <div className="form-grid">
-          <label>
-            Base Currency
-            <select
-              value={form.base_currency}
-              onChange={(event) => setForm((prev) => ({ ...prev, base_currency: event.target.value }))}
-            >
-              <option>USD</option>
-              <option>PKR</option>
-              <option>EUR</option>
-              <option>GBP</option>
-              <option>AED</option>
-            </select>
-          </label>
-          <label>
-            Timezone
-            <input
-              value={form.timezone}
-              onChange={(event) => setForm((prev) => ({ ...prev, timezone: event.target.value }))}
-            />
-          </label>
-          <label>
-            Web Entry Default Status
-            <select
-              value={form.web_entry_default_status}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  web_entry_default_status: event.target.value as SettingsPayload['web_entry_default_status'],
-                }))
-              }
-            >
-              <option value="APPROVED">Approved</option>
-              <option value="PENDING">Pending</option>
-            </select>
-          </label>
-          <label>
-            Allow Self Approval
-            <select
-              value={String(form.allow_self_approval)}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, allow_self_approval: event.target.value === 'true' }))
-              }
-            >
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </select>
-          </label>
-        </div>
-        <button className="primary-button" type="submit">
-          Save Settings
-        </button>
-      </form>
+      <Modal open={isSettingsModalOpen} onClose={closeSettingsModal} title="Workspace Defaults" size="md">
+        <form className="page" onSubmit={submit}>
+          <div className="form-grid">
+            <FormField label="Base Currency">
+              <select
+                value={form.base_currency}
+                onChange={(event) => setForm((prev) => ({ ...prev, base_currency: event.target.value }))}
+              >
+                <option>USD</option>
+                <option>PKR</option>
+                <option>EUR</option>
+                <option>GBP</option>
+                <option>AED</option>
+              </select>
+            </FormField>
+
+            <FormField label="Timezone">
+              <input value={form.timezone} onChange={(event) => setForm((prev) => ({ ...prev, timezone: event.target.value }))} />
+            </FormField>
+
+            <FormField label="Web Entry Default Status">
+              <select
+                value={form.web_entry_default_status}
+                onChange={(event) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    web_entry_default_status: event.target.value as SettingsPayload['web_entry_default_status'],
+                  }))
+                }
+              >
+                <option value="APPROVED">Approved</option>
+                <option value="PENDING">Pending</option>
+              </select>
+            </FormField>
+
+            <FormField label="Allow Self Approval">
+              <select
+                value={String(form.allow_self_approval)}
+                onChange={(event) => setForm((prev) => ({ ...prev, allow_self_approval: event.target.value === 'true' }))}
+              >
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </FormField>
+          </div>
+
+          <FormActions>
+            <button className="primary-button" type="submit">
+              Save Settings
+            </button>
+            <button className="ghost-button" type="button" onClick={closeSettingsModal}>
+              Cancel
+            </button>
+          </FormActions>
+        </form>
+      </Modal>
 
       <div className="card">
         <h3>Slack Connection</h3>
-        <p>Configured through environment variables on API deployment.</p>
+        <p className="muted-text">Configured through environment variables on API deployment.</p>
         <ul>
           <li>`SLACK_SIGNING_SECRET`</li>
           <li>`SLACK_BOT_TOKEN`</li>
@@ -346,84 +380,25 @@ export default function SettingsPage() {
       </div>
 
       <section className="card">
-        <h3>Categories</h3>
-        <p>Create and manage custom categories used in transactions and subscriptions.</p>
-
-        <form className="form-grid" onSubmit={submitCategory}>
-          <label>
-            Category Name
-            <input
-              value={categoryForm.name}
-              onChange={(event) => setCategoryForm((prev) => ({ ...prev, name: event.target.value }))}
-              placeholder="e.g. Tax, Travel, Legal"
-            />
-          </label>
-          <label>
-            Type
-            <select
-              value={categoryForm.type}
-              onChange={(event) =>
-                setCategoryForm((prev) => ({
-                  ...prev,
-                  type: event.target.value as Category['type'],
-                }))
-              }
-            >
-              <option value="EXPENSE">Expense</option>
-              <option value="INCOME">Income</option>
-              <option value="BOTH">Both</option>
-            </select>
-          </label>
-          <div style={{ display: 'flex', alignItems: 'end' }}>
-            <button className="primary-button" type="submit" disabled={categoriesBusy}>
-              {categoriesBusy ? 'Saving...' : 'Add Category'}
-            </button>
+        <div className="section-head">
+          <div>
+            <h3>Categories</h3>
+            <p className="section-subtitle">Create and manage custom categories used in transactions and subscriptions.</p>
           </div>
-        </form>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => {
+              setEditingCategory(null);
+              setCategoryForm({ name: '', type: 'EXPENSE' });
+              setIsCategoryModalOpen(true);
+            }}
+          >
+            Add Category
+          </button>
+        </div>
 
-        {editingCategory ? (
-          <form className="form-grid" style={{ marginTop: '0.75rem' }} onSubmit={saveCategoryEdit}>
-            <label>
-              Edit Category Name
-              <input
-                value={editingCategory.name}
-                onChange={(event) =>
-                  setEditingCategory((prev) => (prev ? { ...prev, name: event.target.value } : prev))
-                }
-              />
-            </label>
-            <label>
-              Edit Type
-              <select
-                value={editingCategory.type}
-                onChange={(event) =>
-                  setEditingCategory((prev) =>
-                    prev ? { ...prev, type: event.target.value as Category['type'] } : prev
-                  )
-                }
-              >
-                <option value="EXPENSE">Expense</option>
-                <option value="INCOME">Income</option>
-                <option value="BOTH">Both</option>
-              </select>
-            </label>
-            <div style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
-              <button className="primary-button" type="submit" disabled={categoriesBusy}>
-                {categoriesBusy ? 'Saving...' : 'Save Edit'}
-              </button>
-              <button
-                className="ghost-button"
-                type="button"
-                disabled={categoriesBusy}
-                onClick={() => setEditingCategory(null)}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        ) : null}
-
-        <div className="table-wrap" style={{ marginTop: '0.75rem' }}>
+        <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -441,19 +416,20 @@ export default function SettingsPage() {
                   <td>{category.is_system ? 'System' : 'Custom'}</td>
                   <td>
                     {category.is_system ? (
-                      <span>Locked</span>
+                      <span className="muted-text">Locked</span>
                     ) : (
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <div className="table-actions">
                         <button
                           className="ghost-button"
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
                             setEditingCategory({
                               id: category.id,
                               name: category.name,
                               type: category.type,
-                            })
-                          }
+                            });
+                            setIsCategoryModalOpen(true);
+                          }}
                           disabled={categoriesBusy}
                         >
                           Edit
@@ -476,85 +452,79 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="card">
-        <h3>Departments</h3>
-        <p>Assign employees to departments to track payroll spend by team.</p>
-
-        <form className="form-grid" onSubmit={submitDepartment}>
-          <label>
-            Department Name
-            <input
-              value={departmentForm.name}
-              onChange={(event) => setDepartmentForm((prev) => ({ ...prev, name: event.target.value }))}
-              placeholder="e.g. Engineering, Operations"
-            />
-          </label>
-          <label>
-            Code (optional)
-            <input
-              value={departmentForm.code}
-              onChange={(event) => setDepartmentForm((prev) => ({ ...prev, code: event.target.value }))}
-              placeholder="e.g. ENG, OPS"
-            />
-          </label>
-          <div style={{ display: 'flex', alignItems: 'end' }}>
-            <button className="primary-button" type="submit" disabled={departmentsBusy}>
-              {departmentsBusy ? 'Saving...' : 'Add Department'}
-            </button>
-          </div>
-        </form>
-
-        {editingDepartment ? (
-          <form className="form-grid" style={{ marginTop: '0.75rem' }} onSubmit={saveDepartmentEdit}>
-            <label>
-              Edit Department Name
+      <Modal
+        open={isCategoryModalOpen}
+        onClose={closeCategoryModal}
+        title={editingCategory ? `Edit Category #${editingCategory.id}` : 'Add Category'}
+        size="sm"
+      >
+        <form className="page" onSubmit={submitCategory}>
+          <div className="form-grid">
+            <FormField label="Category Name">
               <input
-                value={editingDepartment.name}
-                onChange={(event) =>
-                  setEditingDepartment((prev) => (prev ? { ...prev, name: event.target.value } : prev))
-                }
+                value={editingCategory ? editingCategory.name : categoryForm.name}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (editingCategory) {
+                    setEditingCategory((prev) => (prev ? { ...prev, name: value } : prev));
+                  } else {
+                    setCategoryForm((prev) => ({ ...prev, name: value }));
+                  }
+                }}
+                placeholder="e.g. Tax, Travel, Legal"
               />
-            </label>
-            <label>
-              Edit Code
-              <input
-                value={editingDepartment.code}
-                onChange={(event) =>
-                  setEditingDepartment((prev) => (prev ? { ...prev, code: event.target.value } : prev))
-                }
-              />
-            </label>
-            <label>
-              Active
+            </FormField>
+
+            <FormField label="Type">
               <select
-                value={String(editingDepartment.is_active)}
-                onChange={(event) =>
-                  setEditingDepartment((prev) =>
-                    prev ? { ...prev, is_active: event.target.value === 'true' } : prev
-                  )
-                }
+                value={editingCategory ? editingCategory.type : categoryForm.type}
+                onChange={(event) => {
+                  const value = event.target.value as Category['type'];
+                  if (editingCategory) {
+                    setEditingCategory((prev) => (prev ? { ...prev, type: value } : prev));
+                  } else {
+                    setCategoryForm((prev) => ({ ...prev, type: value }));
+                  }
+                }}
               >
-                <option value="true">Yes</option>
-                <option value="false">No</option>
+                <option value="EXPENSE">Expense</option>
+                <option value="INCOME">Income</option>
+                <option value="BOTH">Both</option>
               </select>
-            </label>
-            <div style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
-              <button className="primary-button" type="submit" disabled={departmentsBusy}>
-                {departmentsBusy ? 'Saving...' : 'Save Edit'}
-              </button>
-              <button
-                className="ghost-button"
-                type="button"
-                disabled={departmentsBusy}
-                onClick={() => setEditingDepartment(null)}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        ) : null}
+            </FormField>
+          </div>
 
-        <div className="table-wrap" style={{ marginTop: '0.75rem' }}>
+          <FormActions>
+            <button className="primary-button" type="submit" disabled={categoriesBusy}>
+              {categoriesBusy ? 'Saving...' : editingCategory ? 'Save Category' : 'Create Category'}
+            </button>
+            <button className="ghost-button" type="button" onClick={closeCategoryModal} disabled={categoriesBusy}>
+              Cancel
+            </button>
+          </FormActions>
+        </form>
+      </Modal>
+
+      <section className="card">
+        <div className="section-head">
+          <div>
+            <h3>Departments</h3>
+            <p className="section-subtitle">Assign employees to departments to track payroll spend by team.</p>
+          </div>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => {
+              setEditingDepartment(null);
+              setDepartmentForm({ name: '', code: '', is_active: true });
+              setIsDepartmentModalOpen(true);
+            }}
+          >
+            Add Department
+          </button>
+        </div>
+
+        <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -571,18 +541,19 @@ export default function SettingsPage() {
                   <td>{department.code || '-'}</td>
                   <td>{department.is_active ? 'Yes' : 'No'}</td>
                   <td>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <div className="table-actions">
                       <button
                         className="ghost-button"
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
                           setEditingDepartment({
                             id: department.id,
                             name: department.name,
                             code: department.code || '',
                             is_active: department.is_active,
-                          })
-                        }
+                          });
+                          setIsDepartmentModalOpen(true);
+                        }}
                         disabled={departmentsBusy}
                       >
                         Edit
@@ -603,6 +574,72 @@ export default function SettingsPage() {
           </table>
         </div>
       </section>
+
+      <Modal
+        open={isDepartmentModalOpen}
+        onClose={closeDepartmentModal}
+        title={editingDepartment ? `Edit Department #${editingDepartment.id}` : 'Add Department'}
+        size="sm"
+      >
+        <form className="page" onSubmit={submitDepartment}>
+          <div className="form-grid">
+            <FormField label="Department Name">
+              <input
+                value={editingDepartment ? editingDepartment.name : departmentForm.name}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (editingDepartment) {
+                    setEditingDepartment((prev) => (prev ? { ...prev, name: value } : prev));
+                  } else {
+                    setDepartmentForm((prev) => ({ ...prev, name: value }));
+                  }
+                }}
+                placeholder="e.g. Engineering, Operations"
+              />
+            </FormField>
+
+            <FormField label="Code (optional)">
+              <input
+                value={editingDepartment ? editingDepartment.code : departmentForm.code}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (editingDepartment) {
+                    setEditingDepartment((prev) => (prev ? { ...prev, code: value } : prev));
+                  } else {
+                    setDepartmentForm((prev) => ({ ...prev, code: value }));
+                  }
+                }}
+                placeholder="e.g. ENG, OPS"
+              />
+            </FormField>
+
+            {editingDepartment ? (
+              <FormField label="Active">
+                <select
+                  value={String(editingDepartment.is_active)}
+                  onChange={(event) =>
+                    setEditingDepartment((prev) =>
+                      prev ? { ...prev, is_active: event.target.value === 'true' } : prev
+                    )
+                  }
+                >
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </FormField>
+            ) : null}
+          </div>
+
+          <FormActions>
+            <button className="primary-button" type="submit" disabled={departmentsBusy}>
+              {departmentsBusy ? 'Saving...' : editingDepartment ? 'Save Department' : 'Create Department'}
+            </button>
+            <button className="ghost-button" type="button" onClick={closeDepartmentModal} disabled={departmentsBusy}>
+              Cancel
+            </button>
+          </FormActions>
+        </form>
+      </Modal>
     </section>
   );
 }

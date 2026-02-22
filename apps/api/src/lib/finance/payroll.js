@@ -130,7 +130,7 @@ function normalizeDepartmentCode(rawValue) {
   return normalized || null;
 }
 
-function normalizeEmployeeNumericField(rawValue, { nullable = false } = {}) {
+function normalizeNumericField(rawValue, { nullable = false } = {}) {
   if (rawValue === undefined) {
     return undefined;
   }
@@ -160,19 +160,76 @@ function normalizeEmployeeNumericField(rawValue, { nullable = false } = {}) {
   return rawValue;
 }
 
+function normalizeOptionalNumericField(rawValue) {
+  if (rawValue === undefined || rawValue === null) {
+    return undefined;
+  }
+
+  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+    return undefined;
+  }
+
+  return normalizeNumericField(rawValue);
+}
+
+function pruneUndefinedFields(payload = {}) {
+  for (const key of Object.keys(payload)) {
+    if (payload[key] === undefined) {
+      delete payload[key];
+    }
+  }
+
+  return payload;
+}
+
+function normalizeOptionalDateField(payload, fieldName, errorMessage) {
+  if (payload[fieldName] === undefined) {
+    return;
+  }
+
+  if (payload[fieldName] === null || String(payload[fieldName]).trim() === '') {
+    payload[fieldName] = undefined;
+    return;
+  }
+
+  const normalizedDate = normalizeOptionalDateInput(payload[fieldName]);
+  assert(normalizedDate !== null, 400, errorMessage, {
+    fieldErrors: { [fieldName]: ['Invalid'] },
+  });
+  payload[fieldName] = normalizedDate;
+}
+
+function normalizeRequiredDateField(payload, fieldName, errorMessage) {
+  if (payload[fieldName] === undefined) {
+    return;
+  }
+
+  if (payload[fieldName] === null || String(payload[fieldName]).trim() === '') {
+    assert(false, 400, errorMessage, {
+      fieldErrors: { [fieldName]: ['Invalid'] },
+    });
+  }
+
+  const normalizedDate = normalizeOptionalDateInput(payload[fieldName]);
+  assert(normalizedDate !== null, 400, errorMessage, {
+    fieldErrors: { [fieldName]: ['Invalid'] },
+  });
+  payload[fieldName] = normalizedDate;
+}
+
 function normalizeEmployeePayload(payload = {}) {
   const normalized = { ...(payload || {}) };
 
-  normalized.default_payout_account_id = normalizeEmployeeNumericField(normalized.default_payout_account_id);
-  normalized.default_funding_account_id = normalizeEmployeeNumericField(normalized.default_funding_account_id, {
+  normalized.default_payout_account_id = normalizeNumericField(normalized.default_payout_account_id);
+  normalized.default_funding_account_id = normalizeNumericField(normalized.default_funding_account_id, {
     nullable: true,
   });
-  normalized.department_id = normalizeEmployeeNumericField(normalized.department_id, {
+  normalized.department_id = normalizeNumericField(normalized.department_id, {
     nullable: true,
   });
-  normalized.base_salary_minor = normalizeEmployeeNumericField(normalized.base_salary_minor);
-  normalized.default_allowances_minor = normalizeEmployeeNumericField(normalized.default_allowances_minor);
-  normalized.default_non_loan_deductions_minor = normalizeEmployeeNumericField(
+  normalized.base_salary_minor = normalizeNumericField(normalized.base_salary_minor);
+  normalized.default_allowances_minor = normalizeNumericField(normalized.default_allowances_minor);
+  normalized.default_non_loan_deductions_minor = normalizeNumericField(
     normalized.default_non_loan_deductions_minor
   );
 
@@ -183,6 +240,60 @@ function normalizeEmployeePayload(payload = {}) {
   }
 
   return normalized;
+}
+
+function normalizeLoanCreatePayload(payload = {}) {
+  const normalized = { ...(payload || {}) };
+
+  normalized.employee_id = normalizeNumericField(normalized.employee_id);
+  normalized.principal_minor = normalizeNumericField(normalized.principal_minor);
+  normalized.annual_interest_bps = normalizeNumericField(normalized.annual_interest_bps);
+  normalized.installment_minor = normalizeNumericField(normalized.installment_minor);
+  normalized.disbursement_account_id = normalizeNumericField(normalized.disbursement_account_id);
+  normalized.receivable_control_account_id = normalizeOptionalNumericField(
+    normalized.receivable_control_account_id
+  );
+
+  normalizeOptionalDateField(normalized, 'first_due_date', 'Invalid loan payload.');
+
+  return pruneUndefinedFields(normalized);
+}
+
+function normalizeLoanUpdatePayload(payload = {}) {
+  const normalized = { ...(payload || {}) };
+
+  normalized.annual_interest_bps = normalizeOptionalNumericField(normalized.annual_interest_bps);
+  normalized.installment_minor = normalizeOptionalNumericField(normalized.installment_minor);
+  normalized.disbursement_account_id = normalizeOptionalNumericField(normalized.disbursement_account_id);
+
+  normalizeOptionalDateField(normalized, 'next_due_date', 'Invalid loan payload.');
+
+  return pruneUndefinedFields(normalized);
+}
+
+function normalizeLoanDisbursementPayload(payload = {}) {
+  const normalized = { ...(payload || {}) };
+
+  normalized.from_amount_minor = normalizeOptionalNumericField(normalized.from_amount_minor);
+  normalized.fx_rate = normalizeOptionalNumericField(normalized.fx_rate);
+  normalized.transfer_fee_amount_minor = normalizeOptionalNumericField(normalized.transfer_fee_amount_minor);
+  normalized.transfer_fee_category_id = normalizeOptionalNumericField(normalized.transfer_fee_category_id);
+  normalized.transfer_fee_fx_rate_to_base = normalizeOptionalNumericField(normalized.transfer_fee_fx_rate_to_base);
+
+  normalizeOptionalDateField(normalized, 'disbursement_date', 'Invalid loan disbursement payload.');
+
+  return pruneUndefinedFields(normalized);
+}
+
+function normalizeLoanRepaymentPayload(payload = {}) {
+  const normalized = { ...(payload || {}) };
+
+  normalized.amount_minor = normalizeNumericField(normalized.amount_minor);
+  normalized.cash_account_id = normalizeNumericField(normalized.cash_account_id);
+
+  normalizeRequiredDateField(normalized, 'repayment_date', 'Invalid loan repayment payload.');
+
+  return pruneUndefinedFields(normalized);
 }
 
 async function resolveAccount(workspaceId, accountId, { mustBeActive = true } = {}) {
@@ -1889,7 +2000,8 @@ async function getLoan(workspaceId, loanId) {
 }
 
 async function createLoan(workspace, actorUserId, payload) {
-  const input = parseSchema(EmployeeLoanCreateSchema, payload, 'Invalid loan payload.');
+  const normalizedPayload = normalizeLoanCreatePayload(payload || {});
+  const input = parseSchema(EmployeeLoanCreateSchema, normalizedPayload, 'Invalid loan payload.');
   const employee = await knex()('finance_employees')
     .where({ workspace_id: workspace.id, id: input.employee_id })
     .first();
@@ -1958,7 +2070,8 @@ async function createLoan(workspace, actorUserId, payload) {
 }
 
 async function updateLoan(workspaceId, actorUserId, loanId, payload) {
-  const input = parseSchema(EmployeeLoanUpdateSchema, payload, 'Invalid loan payload.');
+  const normalizedPayload = normalizeLoanUpdatePayload(payload || {});
+  const input = parseSchema(EmployeeLoanUpdateSchema, normalizedPayload, 'Invalid loan payload.');
   const existing = await knex()('finance_employee_loans').where({ workspace_id: workspaceId, id: loanId }).first();
   assert(existing, 404, 'Loan not found.');
 
@@ -2010,7 +2123,12 @@ async function updateLoan(workspaceId, actorUserId, loanId, payload) {
 }
 
 async function disburseLoan(workspace, actorUserId, loanId, payload) {
-  const input = parseSchema(LoanDisbursementInputSchema, payload || {}, 'Invalid loan disbursement payload.');
+  const normalizedPayload = normalizeLoanDisbursementPayload(payload || {});
+  const input = parseSchema(
+    LoanDisbursementInputSchema,
+    normalizedPayload,
+    'Invalid loan disbursement payload.'
+  );
 
   const existing = await knex()('finance_employee_loans').where({ workspace_id: workspace.id, id: loanId }).first();
   assert(existing, 404, 'Loan not found.');
@@ -2140,7 +2258,8 @@ async function disburseLoan(workspace, actorUserId, loanId, payload) {
 }
 
 async function repayLoan(workspace, actorUserId, loanId, payload) {
-  const input = parseSchema(LoanRepaymentInputSchema, payload, 'Invalid loan repayment payload.');
+  const normalizedPayload = normalizeLoanRepaymentPayload(payload || {});
+  const input = parseSchema(LoanRepaymentInputSchema, normalizedPayload, 'Invalid loan repayment payload.');
   const loan = await knex()('finance_employee_loans').where({ workspace_id: workspace.id, id: loanId }).first();
   assert(loan, 404, 'Loan not found.');
   assert(loan.status === 'ACTIVE', 409, 'Loan is not repayable in current status.');

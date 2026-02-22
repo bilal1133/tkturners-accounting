@@ -61,6 +61,10 @@ Private internal finance operations app for founders.
 - `bilal@tkturners.com / ChangeMe123!`
 - `cofounder@tkturners.com / ChangeMe123!`
 
+Note:
+- These defaults are for local development only.
+- In production, set `FINANCE_SEED_ADMIN_PASSWORD_1` and `FINANCE_SEED_ADMIN_PASSWORD_2` explicitly. Bootstrap will fail if they are missing.
+
 ## Commands
 - `yarn test` (parser + reporting unit tests)
 - `yarn workspace api seed` (re-run migrations + seed)
@@ -71,3 +75,11 @@ See `/Users/bilal/dev/tkturners/tkturners-accounting/docs/slack-setup.md`.
 
 ## Deployment
 See `/Users/bilal/dev/tkturners/tkturners-accounting/docs/deployment-railway.md`.
+
+## Security Notes
+- Configure `CRON_SECRET` to protect `/api/finance/cron/subscriptions`.
+- Tune auth and Slack endpoint rate limits via:
+  - `RATE_LIMIT_AUTH_MAX`
+  - `RATE_LIMIT_AUTH_WINDOW_MS`
+  - `RATE_LIMIT_SLACK_MAX`
+  - `RATE_LIMIT_SLACK_WINDOW_MS`

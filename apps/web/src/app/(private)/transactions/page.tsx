@@ -1,11 +1,16 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
 import { apiDownload, apiRequest } from '@/lib/api';
 import { formatMinor, todayDate, todayMonth } from '@/lib/format';
+import { validateWithSchema } from '@/lib/validation';
 import type { Account, Category, Counterparty, FinanceTransaction } from '@/lib/types';
+import { FormActions, FormField } from '@/components/ui/form-field';
+import { Modal } from '@/components/ui/modal';
+import { PageHeader } from '@/components/ui/page-header';
 
 type TransactionForm = {
   date: string;
@@ -32,6 +37,48 @@ type EditTransactionForm = {
   fx_rate_to_base: string;
 };
 
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format.');
+
+const baseTransactionSchema = z.object({
+  date: dateSchema,
+  description: z.string().trim().min(1, 'Description is required.').max(500, 'Description is too long.'),
+  category_id: z.number().int().positive('Category is required.'),
+  counterparty_id: z.number().int().positive().nullable(),
+});
+
+const incomeExpenseFormSchema = baseTransactionSchema.extend({
+  type: z.enum(['INCOME', 'EXPENSE']),
+  account_id: z.number().int().positive('Account is required.'),
+  amount_minor: z.number().int().positive('Amount must be greater than 0.'),
+});
+
+const transferFormSchema = baseTransactionSchema
+  .extend({
+    type: z.literal('TRANSFER'),
+    from_account_id: z.number().int().positive('From account is required.'),
+    to_account_id: z.number().int().positive('To account is required.'),
+    from_amount_minor: z.number().int().positive('Source amount must be greater than 0.'),
+    to_amount_minor: z.number().int().positive('Destination amount must be greater than 0.'),
+    transfer_fee_amount_minor: z.number().int().nonnegative('Transfer fee cannot be negative.'),
+  })
+  .refine((value) => value.from_account_id !== value.to_account_id, {
+    message: 'From and to accounts must be different.',
+    path: ['to_account_id'],
+  });
+
+const editTransactionSchema = z.object({
+  date: dateSchema,
+  description: z.string().trim().min(1, 'Description is required.').max(500, 'Description is too long.'),
+  category_id: z.number().int().positive('Category is required.'),
+  counterparty_id: z.number().int().positive().nullable(),
+  fx_rate_to_base: z
+    .string()
+    .trim()
+    .refine((value) => !value || (Number.isFinite(Number(value)) && Number(value) > 0), {
+      message: 'FX rate must be a positive number when provided.',
+    }),
+});
+
 const initialForm: TransactionForm = {
   date: todayDate(),
   type: 'INCOME',
@@ -57,6 +104,7 @@ export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<FinanceTransaction[]>([]);
   const [form, setForm] = useState<TransactionForm>(initialForm);
   const [editing, setEditing] = useState<EditTransactionForm | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [month, setMonth] = useState(todayMonth());
   const [status, setStatus] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
@@ -121,59 +169,95 @@ export default function TransactionsPage() {
     });
   }, [month, status]);
 
+  const openCreateModal = () => {
+    setForm((prev) => ({ ...initialForm, date: prev.date || todayDate(), account_id: prev.account_id, category_id: prev.category_id, from_account_id: prev.from_account_id, to_account_id: prev.to_account_id }));
+    setIsCreateModalOpen(true);
+  };
+
+  const closeCreateModal = () => {
+    setIsCreateModalOpen(false);
+  };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token) return;
 
+    const normalized = {
+      ...form,
+      description: form.description || '',
+      category_id: Number(form.category_id),
+      counterparty_id: form.counterparty_id ? Number(form.counterparty_id) : null,
+      account_id: Number(form.account_id),
+      amount_minor: Number(form.amount_minor || 0),
+      from_account_id: Number(form.from_account_id),
+      to_account_id: Number(form.to_account_id),
+      from_amount_minor: Number(form.from_amount_minor || 0),
+      to_amount_minor: Number(form.to_amount_minor || 0),
+      transfer_fee_amount_minor: Number(form.transfer_fee_amount_minor || 0),
+    };
+
     try {
-      if (form.type === 'TRANSFER') {
-        const fromAccount = accounts.find((a) => a.id === Number(form.from_account_id));
-        const toAccount = accounts.find((a) => a.id === Number(form.to_account_id));
-        const transferFeeMinor = Number(form.transfer_fee_amount_minor || 0);
+      if (normalized.type === 'TRANSFER') {
+        const parsedTransfer = validateWithSchema(transferFormSchema, normalized);
+        if (!parsedTransfer.success) {
+          setError(parsedTransfer.message);
+          return;
+        }
+        const transferData = parsedTransfer.data;
+        const fromAccount = accounts.find((a) => a.id === Number(transferData.from_account_id));
+        const toAccount = accounts.find((a) => a.id === Number(transferData.to_account_id));
 
         await apiRequest('/finance/transactions', {
           token,
           method: 'POST',
           body: {
             type: 'TRANSFER',
-            date: form.date,
-            description: form.description,
-            from_account_id: Number(form.from_account_id),
-            to_account_id: Number(form.to_account_id),
-            from_amount_minor: Number(form.from_amount_minor),
+            date: transferData.date,
+            description: transferData.description,
+            from_account_id: Number(transferData.from_account_id),
+            to_account_id: Number(transferData.to_account_id),
+            from_amount_minor: Number(transferData.from_amount_minor),
             from_currency: fromAccount?.currency || 'USD',
-            to_amount_minor: Number(form.to_amount_minor),
+            to_amount_minor: Number(transferData.to_amount_minor),
             to_currency: toAccount?.currency || 'USD',
-            category_id: Number(form.category_id),
-            counterparty_id: form.counterparty_id,
+            category_id: Number(transferData.category_id),
+            counterparty_id: transferData.counterparty_id,
             source: 'WEB',
-            ...(transferFeeMinor > 0
+            ...(Number(transferData.transfer_fee_amount_minor || 0) > 0
               ? {
-                  fee_amount_minor: transferFeeMinor,
+                  fee_amount_minor: Number(transferData.transfer_fee_amount_minor),
                   fee_currency: fromAccount?.currency || 'USD',
                 }
               : {}),
           },
         });
       } else {
+        const parsedIncomeExpense = validateWithSchema(incomeExpenseFormSchema, normalized);
+        if (!parsedIncomeExpense.success) {
+          setError(parsedIncomeExpense.message);
+          return;
+        }
+        const transactionData = parsedIncomeExpense.data;
+
         await apiRequest('/finance/transactions', {
           token,
           method: 'POST',
           body: {
-            type: form.type,
-            date: form.date,
-            description: form.description,
-            amount_minor: Number(form.amount_minor),
+            type: transactionData.type,
+            date: transactionData.date,
+            description: transactionData.description,
+            amount_minor: Number(transactionData.amount_minor),
             currency: selectedAccount?.currency || form.currency,
-            account_id: Number(form.account_id),
-            category_id: Number(form.category_id),
-            counterparty_id: form.counterparty_id,
+            account_id: Number(transactionData.account_id),
+            category_id: Number(transactionData.category_id),
+            counterparty_id: transactionData.counterparty_id,
             source: 'WEB',
           },
         });
       }
 
-      setForm((prev) => ({ ...initialForm, date: prev.date }));
+      closeCreateModal();
+      setForm((prev) => ({ ...initialForm, date: prev.date, account_id: prev.account_id, category_id: prev.category_id, from_account_id: prev.from_account_id, to_account_id: prev.to_account_id }));
       await loadTransactions();
       setError(null);
     } catch (submitError) {
@@ -205,17 +289,30 @@ export default function TransactionsPage() {
     event.preventDefault();
     if (!token || !editing) return;
 
+    const parsed = validateWithSchema(editTransactionSchema, {
+      ...editing,
+      category_id: Number(editing.category_id),
+      counterparty_id: editing.counterparty_id ? Number(editing.counterparty_id) : null,
+      description: editing.description || '',
+      fx_rate_to_base: editing.fx_rate_to_base || '',
+    });
+
+    if (!parsed.success) {
+      setError(parsed.message);
+      return;
+    }
+
     try {
       setSavingEdit(true);
       await apiRequest(`/finance/transactions/${editing.id}`, {
         token,
         method: 'PATCH',
         body: {
-          date: editing.date,
-          description: editing.description,
-          category_id: Number(editing.category_id),
-          counterparty_id: editing.counterparty_id,
-          fx_rate_to_base: editing.fx_rate_to_base.trim() ? Number(editing.fx_rate_to_base) : undefined,
+          date: parsed.data.date,
+          description: parsed.data.description,
+          category_id: Number(parsed.data.category_id),
+          counterparty_id: parsed.data.counterparty_id,
+          fx_rate_to_base: parsed.data.fx_rate_to_base.trim() ? Number(parsed.data.fx_rate_to_base) : undefined,
         },
       });
       setEditing(null);
@@ -250,214 +347,151 @@ export default function TransactionsPage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">LEDGER</p>
-          <h2>Transactions</h2>
-        </div>
-        <button
-          className="ghost-button"
-          onClick={() => {
-            if (!token) return;
-            apiDownload(`/finance/exports/transactions.csv?month=${month}`, token).catch((downloadError) => {
-              setError(downloadError instanceof Error ? downloadError.message : 'Download failed');
-            });
-          }}
-        >
-          Export CSV
-        </button>
-      </header>
+      <PageHeader
+        badge="LEDGER"
+        title="Transactions"
+        subtitle="Record income, expense, and transfer flows with audit-ready data."
+        actions={
+          <>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                if (!token) return;
+                apiDownload(`/finance/exports/transactions.csv?month=${month}`, token).catch((downloadError) => {
+                  setError(downloadError instanceof Error ? downloadError.message : 'Download failed');
+                });
+              }}
+            >
+              Export CSV
+            </button>
+            <button className="primary-button" type="button" onClick={openCreateModal}>
+              New Transaction
+            </button>
+          </>
+        }
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      <form className="card" onSubmit={submit}>
-        <h3>Add Transaction</h3>
-        <div className="form-grid">
-          <label>
-            Date
-            <input
-              type="date"
-              value={form.date}
-              onChange={(event) => setForm((prev) => ({ ...prev, date: event.target.value }))}
-              required
-            />
-          </label>
-          <label>
-            Type
-            <select
-              value={form.type}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, type: event.target.value as TransactionForm['type'] }))
-              }
-            >
-              <option value="INCOME">Income</option>
-              <option value="EXPENSE">Expense</option>
-              <option value="TRANSFER">Transfer</option>
-            </select>
-          </label>
-          {form.type === 'TRANSFER' ? (
-            <>
-              <label>
-                From Account
-                <select
-                  value={form.from_account_id}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, from_account_id: Number(event.target.value) }))
-                  }
-                >
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                To Account
-                <select
-                  value={form.to_account_id}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, to_account_id: Number(event.target.value) }))
-                  }
-                >
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                From Amount (minor)
-                <input
-                  type="number"
-                  value={form.from_amount_minor}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, from_amount_minor: Number(event.target.value || 0) }))
-                  }
-                  required
-                />
-              </label>
-              <label>
-                To Amount (minor)
-                <input
-                  type="number"
-                  value={form.to_amount_minor}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, to_amount_minor: Number(event.target.value || 0) }))
-                  }
-                  required
-                />
-              </label>
-              <label>
-                Transfer Fee (minor)
-                <input
-                  type="number"
-                  min={0}
-                  value={form.transfer_fee_amount_minor}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      transfer_fee_amount_minor: Number(event.target.value || 0),
-                    }))
-                  }
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              <label>
-                Account
-                <select
-                  value={form.account_id}
-                  onChange={(event) => setForm((prev) => ({ ...prev, account_id: Number(event.target.value) }))}
-                >
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Amount (minor)
-                <input
-                  type="number"
-                  value={form.amount_minor}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, amount_minor: Number(event.target.value || 0) }))
-                  }
-                  required
-                />
-              </label>
-            </>
-          )}
-          <label>
-            Category
-            <select
-              value={form.category_id}
-              onChange={(event) => setForm((prev) => ({ ...prev, category_id: Number(event.target.value) }))}
-            >
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Counterparty
-            <select
-              value={form.counterparty_id ?? ''}
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  counterparty_id: event.target.value ? Number(event.target.value) : null,
-                }))
-              }
-            >
-              <option value="">None</option>
-              {counterparties.map((counterparty) => (
-                <option key={counterparty.id} value={counterparty.id}>
-                  {counterparty.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label>
-          Description
-          <textarea
-            value={form.description}
-            onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-            required
-          />
-        </label>
-        <button className="primary-button" type="submit">
-          Save Transaction
-        </button>
-      </form>
-
-      {editing ? (
-        <form className="card" onSubmit={submitEdit}>
-          <h3>Edit Pending Transaction #{editing.id}</h3>
+      <Modal open={isCreateModalOpen} onClose={closeCreateModal} title="Add Transaction" size="lg">
+        <form className="page" onSubmit={submit}>
           <div className="form-grid">
-            <label>
-              Date
+            <FormField label="Date">
               <input
                 type="date"
-                value={editing.date}
-                onChange={(event) => setEditing((prev) => (prev ? { ...prev, date: event.target.value } : prev))}
+                value={form.date}
+                onChange={(event) => setForm((prev) => ({ ...prev, date: event.target.value }))}
                 required
               />
-            </label>
-            <label>
-              Category
+            </FormField>
+
+            <FormField label="Type">
               <select
-                value={editing.category_id}
+                value={form.type}
                 onChange={(event) =>
-                  setEditing((prev) => (prev ? { ...prev, category_id: Number(event.target.value) } : prev))
+                  setForm((prev) => ({ ...prev, type: event.target.value as TransactionForm['type'] }))
                 }
+              >
+                <option value="INCOME">Income</option>
+                <option value="EXPENSE">Expense</option>
+                <option value="TRANSFER">Transfer</option>
+              </select>
+            </FormField>
+
+            {form.type === 'TRANSFER' ? (
+              <>
+                <FormField label="From Account">
+                  <select
+                    value={form.from_account_id}
+                    onChange={(event) => setForm((prev) => ({ ...prev, from_account_id: Number(event.target.value) }))}
+                  >
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+
+                <FormField label="To Account">
+                  <select
+                    value={form.to_account_id}
+                    onChange={(event) => setForm((prev) => ({ ...prev, to_account_id: Number(event.target.value) }))}
+                  >
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+
+                <FormField label="From Amount (minor)">
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.from_amount_minor}
+                    onChange={(event) => setForm((prev) => ({ ...prev, from_amount_minor: Number(event.target.value || 0) }))}
+                    required
+                  />
+                </FormField>
+
+                <FormField label="To Amount (minor)">
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.to_amount_minor}
+                    onChange={(event) => setForm((prev) => ({ ...prev, to_amount_minor: Number(event.target.value || 0) }))}
+                    required
+                  />
+                </FormField>
+
+                <FormField label="Transfer Fee (minor)">
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.transfer_fee_amount_minor}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        transfer_fee_amount_minor: Number(event.target.value || 0),
+                      }))
+                    }
+                  />
+                </FormField>
+              </>
+            ) : (
+              <>
+                <FormField label="Account">
+                  <select
+                    value={form.account_id}
+                    onChange={(event) => setForm((prev) => ({ ...prev, account_id: Number(event.target.value) }))}
+                  >
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+
+                <FormField label="Amount (minor)">
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.amount_minor}
+                    onChange={(event) => setForm((prev) => ({ ...prev, amount_minor: Number(event.target.value || 0) }))}
+                    required
+                  />
+                </FormField>
+              </>
+            )}
+
+            <FormField label="Category">
+              <select
+                value={form.category_id}
+                onChange={(event) => setForm((prev) => ({ ...prev, category_id: Number(event.target.value) }))}
               >
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>
@@ -465,20 +499,16 @@ export default function TransactionsPage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Counterparty
+            </FormField>
+
+            <FormField label="Counterparty">
               <select
-                value={editing.counterparty_id ?? ''}
+                value={form.counterparty_id ?? ''}
                 onChange={(event) =>
-                  setEditing((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          counterparty_id: event.target.value ? Number(event.target.value) : null,
-                        }
-                      : prev
-                  )
+                  setForm((prev) => ({
+                    ...prev,
+                    counterparty_id: event.target.value ? Number(event.target.value) : null,
+                  }))
                 }
               >
                 <option value="">None</option>
@@ -488,57 +518,133 @@ export default function TransactionsPage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              FX Rate To Base (optional)
-              <input
-                type="number"
-                min={0}
-                step="0.000001"
-                value={editing.fx_rate_to_base}
-                onChange={(event) =>
-                  setEditing((prev) => (prev ? { ...prev, fx_rate_to_base: event.target.value } : prev))
-                }
-                placeholder="Leave empty to keep unchanged"
-              />
-            </label>
+            </FormField>
           </div>
-          <label>
-            Description
+
+          <FormField label="Description">
             <textarea
-              value={editing.description}
-              onChange={(event) =>
-                setEditing((prev) => (prev ? { ...prev, description: event.target.value } : prev))
-              }
+              value={form.description}
+              onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
               required
             />
-          </label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="primary-button" type="submit" disabled={savingEdit}>
-              {savingEdit ? 'Saving...' : 'Save Changes'}
+          </FormField>
+
+          <FormActions>
+            <button className="primary-button" type="submit">
+              Save Transaction
             </button>
-            <button className="ghost-button" type="button" onClick={() => setEditing(null)} disabled={savingEdit}>
+            <button className="ghost-button" type="button" onClick={closeCreateModal}>
               Cancel
             </button>
-          </div>
+          </FormActions>
         </form>
-      ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(editing)}
+        onClose={() => setEditing(null)}
+        title={editing ? `Edit Pending Transaction #${editing.id}` : 'Edit Transaction'}
+      >
+        {editing ? (
+          <form className="page" onSubmit={submitEdit}>
+            <div className="form-grid">
+              <FormField label="Date">
+                <input
+                  type="date"
+                  value={editing.date}
+                  onChange={(event) => setEditing((prev) => (prev ? { ...prev, date: event.target.value } : prev))}
+                  required
+                />
+              </FormField>
+
+              <FormField label="Category">
+                <select
+                  value={editing.category_id}
+                  onChange={(event) =>
+                    setEditing((prev) => (prev ? { ...prev, category_id: Number(event.target.value) } : prev))
+                  }
+                >
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <FormField label="Counterparty">
+                <select
+                  value={editing.counterparty_id ?? ''}
+                  onChange={(event) =>
+                    setEditing((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            counterparty_id: event.target.value ? Number(event.target.value) : null,
+                          }
+                        : prev
+                    )
+                  }
+                >
+                  <option value="">None</option>
+                  {counterparties.map((counterparty) => (
+                    <option key={counterparty.id} value={counterparty.id}>
+                      {counterparty.name}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <FormField label="FX Rate To Base (optional)">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.000001"
+                  value={editing.fx_rate_to_base}
+                  onChange={(event) =>
+                    setEditing((prev) => (prev ? { ...prev, fx_rate_to_base: event.target.value } : prev))
+                  }
+                  placeholder="Leave empty to keep unchanged"
+                />
+              </FormField>
+            </div>
+
+            <FormField label="Description">
+              <textarea
+                value={editing.description}
+                onChange={(event) =>
+                  setEditing((prev) => (prev ? { ...prev, description: event.target.value } : prev))
+                }
+                required
+              />
+            </FormField>
+
+            <FormActions>
+              <button className="primary-button" type="submit" disabled={savingEdit}>
+                {savingEdit ? 'Saving...' : 'Save Changes'}
+              </button>
+              <button className="ghost-button" type="button" onClick={() => setEditing(null)} disabled={savingEdit}>
+                Cancel
+              </button>
+            </FormActions>
+          </form>
+        ) : null}
+      </Modal>
 
       <div className="card">
         <div className="form-grid">
-          <label>
-            Month
+          <FormField label="Month">
             <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
-          </label>
-          <label>
-            Status
+          </FormField>
+
+          <FormField label="Status">
             <select value={status} onChange={(event) => setStatus(event.target.value)}>
               <option value="">All</option>
               <option value="APPROVED">Approved</option>
               <option value="PENDING">Pending</option>
               <option value="REJECTED">Rejected</option>
             </select>
-          </label>
+          </FormField>
         </div>
       </div>
 
@@ -576,22 +682,24 @@ export default function TransactionsPage() {
                       : transaction.from_account_name}
                 </td>
                 <td>{formatMinor(transaction.amount_minor, transaction.currency)}</td>
-                <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {transaction.status === 'PENDING' ? (
-                    <button className="ghost-button" type="button" onClick={() => beginEdit(transaction)}>
-                      Edit
+                <td>
+                  <div className="table-actions">
+                    {transaction.status === 'PENDING' ? (
+                      <button className="ghost-button" type="button" onClick={() => beginEdit(transaction)}>
+                        Edit
+                      </button>
+                    ) : (
+                      <span className="muted-text">Locked</span>
+                    )}
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => deleteTransaction(Number(transaction.id))}
+                      disabled={busyTransactionId === Number(transaction.id)}
+                    >
+                      {busyTransactionId === Number(transaction.id) ? 'Deleting...' : 'Delete'}
                     </button>
-                  ) : (
-                    <span>Locked</span>
-                  )}
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => deleteTransaction(Number(transaction.id))}
-                    disabled={busyTransactionId === Number(transaction.id)}
-                  >
-                    {busyTransactionId === Number(transaction.id) ? 'Deleting...' : 'Delete'}
-                  </button>
+                  </div>
                 </td>
               </tr>
             ))}

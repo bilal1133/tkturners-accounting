@@ -2,6 +2,27 @@ module.exports = [
   'strapi::logger',
   'strapi::errors',
   {
+    name: 'global::rate-limit',
+    config: {
+      rules: [
+        {
+          name: 'auth-local',
+          path: '/api/auth/local',
+          match: 'exact',
+          max: Number(process.env.RATE_LIMIT_AUTH_MAX || 10),
+          window_ms: Number(process.env.RATE_LIMIT_AUTH_WINDOW_MS || 15 * 60 * 1000),
+        },
+        {
+          name: 'slack-webhooks',
+          path: '/api/slack/',
+          match: 'prefix',
+          max: Number(process.env.RATE_LIMIT_SLACK_MAX || 120),
+          window_ms: Number(process.env.RATE_LIMIT_SLACK_WINDOW_MS || 60 * 1000),
+        },
+      ],
+    },
+  },
+  {
     name: 'strapi::security',
     config: {
       contentSecurityPolicy: {

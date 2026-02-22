@@ -2,11 +2,16 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { formatMinor } from '@/lib/format';
+import { validateWithSchema } from '@/lib/validation';
 import type { Account, PayrollRun } from '@/lib/types';
+import { FormActions, FormField } from '@/components/ui/form-field';
+import { Modal } from '@/components/ui/modal';
+import { PageHeader } from '@/components/ui/page-header';
 
 type EditEntryForm = {
   entry_id: number;
@@ -25,6 +30,14 @@ type EntryPaymentConfig = {
   extra_fee_amount_minor: string;
   extra_fee_description: string;
 };
+
+const editEntrySchema = z.object({
+  entry_id: z.number().int().positive(),
+  base_salary_minor: z.number().int().nonnegative('Base salary cannot be negative.'),
+  allowances_minor: z.number().int().nonnegative('Allowances cannot be negative.'),
+  non_loan_deductions_minor: z.number().int().nonnegative('Deductions cannot be negative.'),
+  planned_loan_deduction_minor: z.number().int().nonnegative('Loan deduction cannot be negative.'),
+});
 
 export default function PayrollRunDetailPage() {
   const params = useParams<{ id: string }>();
@@ -236,15 +249,28 @@ export default function PayrollRunDetailPage() {
     event.preventDefault();
     if (!token || !payrollRunId || !editing) return;
 
+    const parsed = validateWithSchema(editEntrySchema, {
+      entry_id: Number(editing.entry_id),
+      base_salary_minor: Number(editing.base_salary_minor || 0),
+      allowances_minor: Number(editing.allowances_minor || 0),
+      non_loan_deductions_minor: Number(editing.non_loan_deductions_minor || 0),
+      planned_loan_deduction_minor: Number(editing.planned_loan_deduction_minor || 0),
+    });
+
+    if (!parsed.success) {
+      setError(parsed.message);
+      return;
+    }
+
     try {
       await apiRequest(`/finance/payroll-runs/${payrollRunId}/entries/${editing.entry_id}`, {
         token,
         method: 'PATCH',
         body: {
-          base_salary_minor: editing.base_salary_minor,
-          allowances_minor: editing.allowances_minor,
-          non_loan_deductions_minor: editing.non_loan_deductions_minor,
-          planned_loan_deduction_minor: editing.planned_loan_deduction_minor,
+          base_salary_minor: parsed.data.base_salary_minor,
+          allowances_minor: parsed.data.allowances_minor,
+          non_loan_deductions_minor: parsed.data.non_loan_deductions_minor,
+          planned_loan_deduction_minor: parsed.data.planned_loan_deduction_minor,
         },
       });
       setEditing(null);
@@ -257,23 +283,23 @@ export default function PayrollRunDetailPage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">PAYROLL RUN DETAIL</p>
-          <h2>{run ? `Payroll ${run.period_month}` : 'Payroll'}</h2>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="ghost-button" onClick={() => runAction('generate')}>
-            Generate
-          </button>
-          <button className="ghost-button" onClick={() => runAction('approve')}>
-            Approve
-          </button>
-          <button className="primary-button" onClick={payRun} disabled={paying}>
-            {paying ? 'Paying...' : 'Pay Run'}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        badge="PAYROLL RUN DETAIL"
+        title={run ? `Payroll ${run.period_month}` : 'Payroll'}
+        actions={
+          <>
+            <button className="ghost-button" type="button" onClick={() => runAction('generate')}>
+              Generate
+            </button>
+            <button className="ghost-button" type="button" onClick={() => runAction('approve')}>
+              Approve
+            </button>
+            <button className="primary-button" type="button" onClick={payRun} disabled={paying}>
+              {paying ? 'Paying...' : 'Pay Run'}
+            </button>
+          </>
+        }
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
 
@@ -307,93 +333,98 @@ export default function PayrollRunDetailPage() {
         </p>
       </div>
 
-      {editing ? (
-        <form className="card" onSubmit={submitEntryEdit}>
-          <h3>Edit Entry #{editing.entry_id}</h3>
-          <div className="form-grid">
-            <label>
-              Base Salary (minor)
-              <input
-                type="number"
-                min={0}
-                value={editing.base_salary_minor}
-                onChange={(event) =>
-                  setEditing((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          base_salary_minor: Number(event.target.value || 0),
-                        }
-                      : prev
-                  )
-                }
-              />
-            </label>
-            <label>
-              Allowances (minor)
-              <input
-                type="number"
-                min={0}
-                value={editing.allowances_minor}
-                onChange={(event) =>
-                  setEditing((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          allowances_minor: Number(event.target.value || 0),
-                        }
-                      : prev
-                  )
-                }
-              />
-            </label>
-            <label>
-              Non-loan Deductions (minor)
-              <input
-                type="number"
-                min={0}
-                value={editing.non_loan_deductions_minor}
-                onChange={(event) =>
-                  setEditing((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          non_loan_deductions_minor: Number(event.target.value || 0),
-                        }
-                      : prev
-                  )
-                }
-              />
-            </label>
-            <label>
-              Planned Loan Deduction (minor)
-              <input
-                type="number"
-                min={0}
-                value={editing.planned_loan_deduction_minor}
-                onChange={(event) =>
-                  setEditing((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          planned_loan_deduction_minor: Number(event.target.value || 0),
-                        }
-                      : prev
-                  )
-                }
-              />
-            </label>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="primary-button" type="submit">
-              Save Entry
-            </button>
-            <button className="ghost-button" type="button" onClick={() => setEditing(null)}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : null}
+      <Modal
+        open={Boolean(editing)}
+        onClose={() => setEditing(null)}
+        title={editing ? `Edit Entry #${editing.entry_id}` : 'Edit Payroll Entry'}
+      >
+        {editing ? (
+          <form className="page" onSubmit={submitEntryEdit}>
+            <div className="form-grid">
+              <FormField label="Base Salary (minor)">
+                <input
+                  type="number"
+                  min={0}
+                  value={editing.base_salary_minor}
+                  onChange={(event) =>
+                    setEditing((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            base_salary_minor: Number(event.target.value || 0),
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </FormField>
+
+              <FormField label="Allowances (minor)">
+                <input
+                  type="number"
+                  min={0}
+                  value={editing.allowances_minor}
+                  onChange={(event) =>
+                    setEditing((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            allowances_minor: Number(event.target.value || 0),
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </FormField>
+
+              <FormField label="Non-loan Deductions (minor)">
+                <input
+                  type="number"
+                  min={0}
+                  value={editing.non_loan_deductions_minor}
+                  onChange={(event) =>
+                    setEditing((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            non_loan_deductions_minor: Number(event.target.value || 0),
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </FormField>
+
+              <FormField label="Planned Loan Deduction (minor)">
+                <input
+                  type="number"
+                  min={0}
+                  value={editing.planned_loan_deduction_minor}
+                  onChange={(event) =>
+                    setEditing((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            planned_loan_deduction_minor: Number(event.target.value || 0),
+                          }
+                        : prev
+                    )
+                  }
+                />
+              </FormField>
+            </div>
+
+            <FormActions>
+              <button className="primary-button" type="submit">
+                Save Entry
+              </button>
+              <button className="ghost-button" type="button" onClick={() => setEditing(null)}>
+                Cancel
+              </button>
+            </FormActions>
+          </form>
+        ) : null}
+      </Modal>
 
       <div className="card table-wrap">
         <table className="table">
@@ -568,6 +599,7 @@ export default function PayrollRunDetailPage() {
                   <td>
                     <button
                       className="ghost-button"
+                      type="button"
                       onClick={() =>
                         setEditing({
                           entry_id: entry.id,
