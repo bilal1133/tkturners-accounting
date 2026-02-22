@@ -1,4 +1,4 @@
-name: Deploy Railway
+name: Deploy Railway API
 
 on:
   push:
@@ -20,10 +20,5 @@ jobs:
 
       - name: Deploy API service
         run: npx -y @railway/cli@latest up --service api --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT" --ci --detach
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-      - name: Deploy Web service
-        run: npx -y @railway/cli@latest up --service web --project "$RAILWAY_PROJECT_ID" --environment "$RAILWAY_ENVIRONMENT" --ci --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

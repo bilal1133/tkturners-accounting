@@ -1,8 +1,10 @@
-FROM node:20-alpine
+FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-RUN apk add --no-cache libc6-compat vips
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libc6 libvips42 ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY package.json yarn.lock ./
 COPY apps/api/package.json apps/api/package.json
@@ -13,6 +15,8 @@ COPY packages/shared-types/package.json packages/shared-types/package.json
 RUN yarn install --frozen-lockfile
 
 COPY . .
+
+RUN mkdir -p /app/apps/api/public/uploads
 
 RUN yarn workspace api build
 

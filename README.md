@@ -74,7 +74,12 @@ Note:
 See `/Users/bilal/dev/tkturners/tkturners-accounting/docs/slack-setup.md`.
 
 ## Deployment
-See `/Users/bilal/dev/tkturners/tkturners-accounting/docs/deployment-railway.md`.
+Recommended low-cost split:
+- Frontend (Next.js): Vercel
+- Backend (Strapi) + DB: Railway
+
+Setup guide:
+- `/Users/bilal/dev/tkturners/tkturners-accounting/docs/deployment-railway.md`
 
 ## Security Notes
 - Configure `CRON_SECRET` to protect `/api/finance/cron/subscriptions`.
