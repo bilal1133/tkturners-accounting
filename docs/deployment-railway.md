@@ -23,3 +23,12 @@ Create Railway cron hitting:
 
 Header:
 - `x-cron-secret: <CRON_SECRET>`
+
+## GitHub auto-deploy
+This repository includes `/Users/bilal/dev/tkturners/tkturners-accounting/.github/workflows/deploy-railway.yml`.
+
+Required one-time setup in GitHub repository settings:
+- Add secret `RAILWAY_TOKEN` (Project token with deploy access).
+
+Deploy trigger:
+- Every push to `main` deploys `api` and `web` services to Railway project `7bd08fab-9004-4386-9729-aad653f7fabc` environment `production`.
