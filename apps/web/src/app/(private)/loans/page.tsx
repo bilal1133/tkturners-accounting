@@ -33,6 +33,14 @@ type LoanDisbursementForm = {
   transfer_fee_description: string;
 };
 
+const initialLoanDisbursementForm: LoanDisbursementForm = {
+  disbursement_date: todayDate(),
+  from_amount_minor: '',
+  fx_rate: '',
+  transfer_fee_amount_minor: '',
+  transfer_fee_description: '',
+};
+
 const initialLoanForm: LoanForm = {
   employee_id: 0,
   currency: 'USD',
@@ -55,7 +63,7 @@ function makeInitialDisbursementForm(loan?: EmployeeLoan): LoanDisbursementForm 
   const sameCurrency =
     loan && loan.disbursement_account_currency && loan.disbursement_account_currency === loan.currency;
   return {
-    disbursement_date: todayDate(),
+    disbursement_date: initialLoanDisbursementForm.disbursement_date,
     from_amount_minor: sameCurrency ? String(loan.principal_minor) : '',
     fx_rate: '',
     transfer_fee_amount_minor: '',
@@ -69,6 +77,10 @@ export default function LoansPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loanForm, setLoanForm] = useState<LoanForm>(initialLoanForm);
+  const [createAndDisburse, setCreateAndDisburse] = useState(false);
+  const [createDisbursementForm, setCreateDisbursementForm] = useState<LoanDisbursementForm>(
+    initialLoanDisbursementForm
+  );
   const [repaymentForm, setRepaymentForm] = useState<RepaymentForm>(initialRepaymentForm);
   const [loanDisbursements, setLoanDisbursements] = useState<Record<number, LoanDisbursementForm>>({});
   const [error, setError] = useState<string | null>(null);
@@ -131,8 +143,19 @@ export default function LoansPage() {
     event.preventDefault();
     if (!token) return;
 
+    if (
+      createAndDisburse &&
+      createDisbursementIsCrossCurrency &&
+      (!createDisbursementForm.from_amount_minor.trim() || !createDisbursementForm.fx_rate.trim())
+    ) {
+      setError('To disburse cross-currency during create, provide source amount and FX rate.');
+      return;
+    }
+
+    let createdLoanId: number | null = null;
+
     try {
-      await apiRequest('/finance/loans', {
+      const createdLoan = await apiRequest<EmployeeLoan>('/finance/loans', {
         token,
         method: 'POST',
         body: {
@@ -141,10 +164,38 @@ export default function LoansPage() {
           first_due_date: loanForm.first_due_date || undefined,
         },
       });
+      createdLoanId = createdLoan.id;
+
+      if (createAndDisburse) {
+        const transferFeeAmount = createDisbursementForm.transfer_fee_amount_minor.trim();
+        await apiRequest(`/finance/loans/${createdLoan.id}/disburse`, {
+          token,
+          method: 'POST',
+          body: {
+            disbursement_date: createDisbursementForm.disbursement_date || undefined,
+            from_amount_minor: createDisbursementForm.from_amount_minor.trim()
+              ? Number(createDisbursementForm.from_amount_minor)
+              : undefined,
+            fx_rate: createDisbursementForm.fx_rate.trim() ? Number(createDisbursementForm.fx_rate) : undefined,
+            transfer_fee_amount_minor: transferFeeAmount ? Number(transferFeeAmount) : undefined,
+            transfer_fee_currency: transferFeeAmount ? createDisbursementSourceCurrency : undefined,
+            transfer_fee_description: createDisbursementForm.transfer_fee_description.trim() || undefined,
+          },
+        });
+      }
+
       await load();
+      setCreateAndDisburse(false);
+      setCreateDisbursementForm(initialLoanDisbursementForm);
       setError(null);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Failed to create loan');
+      await load().catch(() => undefined);
+      const message = submitError instanceof Error ? submitError.message : 'Failed to create loan';
+      if (createdLoanId && createAndDisburse) {
+        setError(`Loan #${createdLoanId} was created, but disbursement failed: ${message}`);
+      } else {
+        setError(message);
+      }
     }
   };
 
@@ -221,6 +272,16 @@ export default function LoansPage() {
   };
 
   const selectedEmployee = employees.find((employee) => employee.id === Number(loanForm.employee_id));
+  const selectedDisbursementAccount = cashAccounts.find((account) => account.id === Number(loanForm.disbursement_account_id));
+  const loanCurrency = selectedEmployee?.payroll_currency || loanForm.currency;
+  const createDisbursementSourceCurrency = selectedDisbursementAccount?.currency || loanCurrency;
+  const createDisbursementIsCrossCurrency = createDisbursementSourceCurrency !== loanCurrency;
+  const createDisbursementPreviewRate =
+    createDisbursementIsCrossCurrency &&
+    Number(loanForm.principal_minor) > 0 &&
+    Number(createDisbursementForm.from_amount_minor) > 0
+      ? Number(loanForm.principal_minor) / Number(createDisbursementForm.from_amount_minor)
+      : null;
 
   return (
     <section className="page">
@@ -323,13 +384,131 @@ export default function LoansPage() {
               onChange={(event) => setLoanForm((prev) => ({ ...prev, first_due_date: event.target.value }))}
             />
           </label>
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              border: '1px solid var(--line)',
+              borderRadius: 10,
+              padding: '0.75rem',
+              display: 'grid',
+              gap: '0.55rem',
+            }}
+          >
+            <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', color: 'var(--text)' }}>
+              <input
+                type="checkbox"
+                checked={createAndDisburse}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setCreateAndDisburse(checked);
+                  if (!checked) return;
+                  setCreateDisbursementForm((prev) => ({
+                    ...prev,
+                    disbursement_date: prev.disbursement_date || todayDate(),
+                    from_amount_minor:
+                      !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
+                        ? String(loanForm.principal_minor)
+                        : prev.from_amount_minor,
+                    fx_rate: !createDisbursementIsCrossCurrency ? '' : prev.fx_rate,
+                  }));
+                }}
+              />
+              Disburse immediately after loan creation
+            </label>
+            <p style={{ margin: 0, color: 'var(--muted)' }}>
+              Conversion path: {createDisbursementSourceCurrency} source account {'->'} {loanCurrency} employee
+              loan.
+            </p>
+            {createAndDisburse ? (
+              <div className="form-grid">
+                <label>
+                  Disbursement Date
+                  <input
+                    type="date"
+                    value={createDisbursementForm.disbursement_date}
+                    onChange={(event) =>
+                      setCreateDisbursementForm((prev) => ({ ...prev, disbursement_date: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Source Amount (minor, {createDisbursementSourceCurrency})
+                  <input
+                    type="number"
+                    min={1}
+                    value={createDisbursementForm.from_amount_minor}
+                    placeholder={
+                      !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
+                        ? String(loanForm.principal_minor)
+                        : ''
+                    }
+                    onChange={(event) =>
+                      setCreateDisbursementForm((prev) => ({ ...prev, from_amount_minor: event.target.value }))
+                    }
+                  />
+                </label>
+                {createDisbursementIsCrossCurrency ? (
+                  <label>
+                    FX Rate ({createDisbursementSourceCurrency} {'->'} {loanCurrency})
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.000001"
+                      value={createDisbursementForm.fx_rate}
+                      onChange={(event) =>
+                        setCreateDisbursementForm((prev) => ({ ...prev, fx_rate: event.target.value }))
+                      }
+                      required
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    FX Rate
+                    <input value="1 (same currency)" disabled />
+                  </label>
+                )}
+                <label>
+                  Transfer Fee (minor, {createDisbursementSourceCurrency})
+                  <input
+                    type="number"
+                    min={0}
+                    value={createDisbursementForm.transfer_fee_amount_minor}
+                    onChange={(event) =>
+                      setCreateDisbursementForm((prev) => ({
+                        ...prev,
+                        transfer_fee_amount_minor: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Fee Description (optional)
+                  <input
+                    value={createDisbursementForm.transfer_fee_description}
+                    onChange={(event) =>
+                      setCreateDisbursementForm((prev) => ({
+                        ...prev,
+                        transfer_fee_description: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                {createDisbursementPreviewRate ? (
+                  <p style={{ margin: 0, color: 'var(--muted)' }}>
+                    Implied FX from amounts: {createDisbursementPreviewRate.toFixed(6)} {loanCurrency}/
+                    {createDisbursementSourceCurrency}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
         <p>
-          If disbursement account currency differs from loan currency, provide source amount + FX rate during
-          disbursement. Transfer fee is company expense and is not added to employee principal.
+          Cross-currency loans require source amount + FX rate on disbursement. Transfer fee is company expense and
+          is not added to employee principal.
         </p>
         <button className="primary-button" type="submit">
-          Create Loan
+          {createAndDisburse ? 'Create Loan + Disburse' : 'Create Loan'}
         </button>
       </form>
 
