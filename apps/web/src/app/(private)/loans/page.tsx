@@ -126,6 +126,46 @@ function normalizeLoan(loan: EmployeeLoan): EmployeeLoan {
   };
 }
 
+function getLoanDisbursementAction(loan: EmployeeLoan): {
+  canDisburse: boolean;
+  label: string;
+  hint: string | null;
+} {
+  const isReady = loan.status === 'APPROVED' || loan.status === 'DRAFT';
+  if (isReady) {
+    return {
+      canDisburse: true,
+      label: 'Disburse',
+      hint: null,
+    };
+  }
+
+  const alreadyDisbursed =
+    loan.status === 'ACTIVE' || Boolean(loan.disbursement_date) || Boolean(loan.disbursement_transaction_id);
+
+  if (alreadyDisbursed) {
+    const parts: string[] = ['Already disbursed'];
+    if (loan.disbursement_date) {
+      parts.push(`on ${loan.disbursement_date}`);
+    }
+    if (loan.disbursement_transaction_id) {
+      parts.push(`(Txn #${loan.disbursement_transaction_id})`);
+    }
+
+    return {
+      canDisburse: false,
+      label: 'Disbursed',
+      hint: parts.join(' '),
+    };
+  }
+
+  return {
+    canDisburse: false,
+    label: 'Locked',
+    hint: `Loan status ${loan.status} cannot be disbursed.`,
+  };
+}
+
 export default function LoansPage() {
   const { token } = useAuth();
   const [loans, setLoans] = useState<EmployeeLoan[]>([]);
@@ -676,7 +716,8 @@ export default function LoansPage() {
               const disbursement = loanDisbursements[loan.id] || makeInitialDisbursementForm(loan);
               const sourceCurrency = loan.disbursement_account_currency || loan.currency;
               const isCrossCurrency = sourceCurrency !== loan.currency;
-              const canDisburse = loan.status === 'APPROVED' || loan.status === 'DRAFT';
+              const disbursementAction = getLoanDisbursementAction(loan);
+              const canDisburse = disbursementAction.canDisburse;
               const rowDisabled = !canDisburse;
 
               return (
@@ -758,9 +799,15 @@ export default function LoansPage() {
                       type="button"
                       onClick={() => disburse(loan)}
                       disabled={!canDisburse}
+                      title={disbursementAction.hint || undefined}
                     >
-                      Disburse
+                      {disbursementAction.label}
                     </button>
+                    {disbursementAction.hint ? (
+                      <small style={{ display: 'block', marginTop: 6, color: 'var(--muted)' }}>
+                        {disbursementAction.hint}
+                      </small>
+                    ) : null}
                   </td>
                 </tr>
               );
