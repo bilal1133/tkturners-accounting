@@ -64,11 +64,35 @@ function makeInitialDisbursementForm(loan?: EmployeeLoan): LoanDisbursementForm 
     loan && loan.disbursement_account_currency && loan.disbursement_account_currency === loan.currency;
   return {
     disbursement_date: initialLoanDisbursementForm.disbursement_date,
-    from_amount_minor: sameCurrency ? String(loan.principal_minor) : '',
+    from_amount_minor: sameCurrency ? minorToMajorInput(loan.principal_minor) : '',
     fx_rate: '',
     transfer_fee_amount_minor: '',
     transfer_fee_description: '',
   };
+}
+
+function minorToMajorInput(amountMinor: number | null | undefined): string {
+  const numeric = Number(amountMinor || 0);
+  if (!Number.isFinite(numeric) || numeric === 0) {
+    return '';
+  }
+
+  const major = numeric / 100;
+  return Number.isInteger(major) ? String(major) : major.toFixed(2);
+}
+
+function majorInputToMinor(rawValue: string): number {
+  const normalized = String(rawValue || '').replace(/,/g, '').trim();
+  if (!normalized) {
+    return 0;
+  }
+
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  return Math.round(numeric * 100);
 }
 
 function asNumber(value: unknown, fallback = 0): number {
@@ -335,7 +359,7 @@ export default function LoansPage() {
         const transferFeeAmount = createDisbursementForm.transfer_fee_amount_minor.trim();
         const sourceAmountMinor =
           createDisbursementIsCrossCurrency && createDisbursementForm.from_amount_minor.trim()
-            ? Number(createDisbursementForm.from_amount_minor)
+            ? majorInputToMinor(createDisbursementForm.from_amount_minor)
             : undefined;
         const fxRate =
           createDisbursementIsCrossCurrency && createDisbursementForm.fx_rate.trim()
@@ -349,7 +373,7 @@ export default function LoansPage() {
             disbursement_date: createDisbursementForm.disbursement_date || undefined,
             from_amount_minor: sourceAmountMinor,
             fx_rate: fxRate,
-            transfer_fee_amount_minor: transferFeeAmount ? Number(transferFeeAmount) : undefined,
+            transfer_fee_amount_minor: transferFeeAmount ? majorInputToMinor(transferFeeAmount) : undefined,
             transfer_fee_currency: transferFeeAmount ? createDisbursementSourceCurrency : undefined,
             transfer_fee_description: createDisbursementForm.transfer_fee_description.trim() || undefined,
           },
@@ -402,11 +426,11 @@ export default function LoansPage() {
         body: {
           disbursement_date: disbursementConfig.disbursement_date || undefined,
           from_amount_minor: disbursementConfig.from_amount_minor.trim()
-            ? Number(disbursementConfig.from_amount_minor)
+            ? majorInputToMinor(disbursementConfig.from_amount_minor)
             : undefined,
           fx_rate: disbursementConfig.fx_rate.trim() ? Number(disbursementConfig.fx_rate) : undefined,
           transfer_fee_amount_minor: disbursementConfig.transfer_fee_amount_minor.trim()
-            ? Number(disbursementConfig.transfer_fee_amount_minor)
+            ? majorInputToMinor(disbursementConfig.transfer_fee_amount_minor)
             : undefined,
           transfer_fee_currency: disbursementConfig.transfer_fee_amount_minor.trim()
             ? sourceCurrency
@@ -453,13 +477,13 @@ export default function LoansPage() {
   const createDisbursementPreviewRate =
     createDisbursementIsCrossCurrency &&
     Number(loanForm.principal_minor) > 0 &&
-    Number(createDisbursementForm.from_amount_minor) > 0
-      ? Number(loanForm.principal_minor) / Number(createDisbursementForm.from_amount_minor)
+    majorInputToMinor(createDisbursementForm.from_amount_minor) > 0
+      ? Number(loanForm.principal_minor) / majorInputToMinor(createDisbursementForm.from_amount_minor)
       : null;
   const createSourceAmountMinor = createDisbursementIsCrossCurrency
-    ? asNumber(createDisbursementForm.from_amount_minor)
+    ? majorInputToMinor(createDisbursementForm.from_amount_minor)
     : asNumber(loanForm.principal_minor);
-  const createTransferFeeMinor = asNumber(createDisbursementForm.transfer_fee_amount_minor);
+  const createTransferFeeMinor = majorInputToMinor(createDisbursementForm.transfer_fee_amount_minor);
   const createTotalSourceDebitMinor = createSourceAmountMinor + createTransferFeeMinor;
 
   return (
@@ -521,26 +545,36 @@ export default function LoansPage() {
             </select>
           </label>
           <label>
-            Principal (minor)
+            Principal ({loanCurrency})
             <input
               type="number"
-              min={1}
-              value={loanForm.principal_minor}
+              min={0}
+              step="0.01"
+              value={minorToMajorInput(loanForm.principal_minor)}
               onChange={(event) =>
-                setLoanForm((prev) => ({ ...prev, principal_minor: Number(event.target.value || 0) }))
+                setLoanForm((prev) => ({
+                  ...prev,
+                  principal_minor: majorInputToMinor(event.target.value),
+                }))
               }
+              placeholder="0.00"
               required
             />
           </label>
           <label>
-            Installment (minor)
+            Installment ({loanCurrency})
             <input
               type="number"
-              min={1}
-              value={loanForm.installment_minor}
+              min={0}
+              step="0.01"
+              value={minorToMajorInput(loanForm.installment_minor)}
               onChange={(event) =>
-                setLoanForm((prev) => ({ ...prev, installment_minor: Number(event.target.value || 0) }))
+                setLoanForm((prev) => ({
+                  ...prev,
+                  installment_minor: majorInputToMinor(event.target.value),
+                }))
               }
+              placeholder="0.00"
               required
             />
           </label>
@@ -549,10 +583,11 @@ export default function LoansPage() {
             <input
               type="number"
               min={0}
-              value={loanForm.annual_interest_bps}
+              value={loanForm.annual_interest_bps || ''}
               onChange={(event) =>
                 setLoanForm((prev) => ({ ...prev, annual_interest_bps: Number(event.target.value || 0) }))
               }
+              placeholder="0"
             />
           </label>
           <label>
@@ -586,7 +621,7 @@ export default function LoansPage() {
                     disbursement_date: prev.disbursement_date || todayDate(),
                     from_amount_minor:
                       !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
-                        ? String(loanForm.principal_minor)
+                        ? minorToMajorInput(loanForm.principal_minor)
                         : prev.from_amount_minor,
                     fx_rate: !createDisbursementIsCrossCurrency ? '' : prev.fx_rate,
                   }));
@@ -611,14 +646,15 @@ export default function LoansPage() {
                   />
                 </label>
                 <label>
-                  Source Amount Debited (minor, {createDisbursementSourceCurrency})
+                  Source Amount Debited ({createDisbursementSourceCurrency})
                   <input
                     type="number"
-                    min={1}
+                    min={0}
+                    step="0.01"
                     value={createDisbursementForm.from_amount_minor}
                     placeholder={
                       !createDisbursementIsCrossCurrency && Number(loanForm.principal_minor) > 0
-                        ? String(loanForm.principal_minor)
+                        ? minorToMajorInput(loanForm.principal_minor)
                         : ''
                     }
                     onChange={(event) =>
@@ -647,10 +683,11 @@ export default function LoansPage() {
                   </label>
                 )}
                 <label>
-                  Transaction Fee (minor, {createDisbursementSourceCurrency}, deducted from source)
+                  Transaction Fee ({createDisbursementSourceCurrency}, deducted from source)
                   <input
                     type="number"
                     min={0}
+                    step="0.01"
                     value={createDisbursementForm.transfer_fee_amount_minor}
                     onChange={(event) =>
                       setCreateDisbursementForm((prev) => ({
@@ -741,24 +778,26 @@ export default function LoansPage() {
             </select>
           </label>
           <label>
-            Amount (minor)
-              <input
-                type="number"
-                min={1}
-                value={repaymentForm.amount_minor}
-                onChange={(event) =>
+            Amount ({selectedRepaymentLoan?.currency || selectedRepaymentAccount?.currency || 'Currency'})
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={minorToMajorInput(repaymentForm.amount_minor)}
+              onChange={(event) =>
                 {
-                  const enteredAmount = Number(event.target.value || 0);
+                  const enteredMinor = majorInputToMinor(event.target.value);
                   const cappedAmount = selectedRepaymentLoan
-                    ? Math.max(0, Math.min(enteredAmount, repaymentOutstandingMinor))
-                    : Math.max(0, enteredAmount);
+                    ? Math.max(0, Math.min(enteredMinor, repaymentOutstandingMinor))
+                    : Math.max(0, enteredMinor);
                   setRepaymentAmountTouched(true);
                   setRepaymentForm((prev) => ({ ...prev, amount_minor: cappedAmount }));
                 }
-                }
-                required
-              />
-            </label>
+              }
+              placeholder="0.00"
+              required
+            />
+          </label>
           </div>
         {selectedRepaymentLoan ? (
           <div style={{ display: 'grid', gap: 8 }}>
@@ -868,8 +907,9 @@ export default function LoansPage() {
                         <>
                           <input
                             type="number"
-                            min={1}
-                            placeholder={`Source amount (${sourceCurrency} minor)`}
+                            min={0}
+                            step="0.01"
+                            placeholder={`Source amount (${sourceCurrency})`}
                             value={disbursement.from_amount_minor}
                             onChange={(event) =>
                               setDisbursementInput(loan.id, { from_amount_minor: event.target.value })
@@ -894,7 +934,8 @@ export default function LoansPage() {
                       <input
                         type="number"
                         min={0}
-                        placeholder={`Transfer fee (${sourceCurrency} minor)`}
+                        step="0.01"
+                        placeholder={`Transfer fee (${sourceCurrency})`}
                         value={disbursement.transfer_fee_amount_minor}
                         onChange={(event) =>
                           setDisbursementInput(loan.id, { transfer_fee_amount_minor: event.target.value })
