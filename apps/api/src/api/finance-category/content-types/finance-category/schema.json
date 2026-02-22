@@ -1,0 +1,34 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_categories",
+  "info": {
+    "singularName": "finance-category",
+    "pluralName": "finance-categories",
+    "displayName": "Finance Category",
+    "description": "Workspace-scoped transaction categories"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "workspace_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "type": {
+      "type": "enumeration",
+      "enum": ["INCOME", "EXPENSE", "BOTH"],
+      "default": "EXPENSE",
+      "required": true
+    },
+    "is_system": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}

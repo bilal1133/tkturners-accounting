@@ -1,0 +1,42 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_transaction_lines",
+  "info": {
+    "singularName": "finance-transaction-line",
+    "pluralName": "finance-transaction-lines",
+    "displayName": "Finance Transaction Line",
+    "description": "Account movement lines"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "transaction_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "account_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "direction": {
+      "type": "enumeration",
+      "enum": ["IN", "OUT"],
+      "required": true
+    },
+    "amount_minor": {
+      "type": "biginteger",
+      "required": true
+    },
+    "currency": {
+      "type": "string",
+      "required": true
+    },
+    "line_role": {
+      "type": "enumeration",
+      "enum": ["PRIMARY", "COUNTERPART"],
+      "required": true
+    }
+  }
+}

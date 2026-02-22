@@ -1,0 +1,24 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_tags",
+  "info": {
+    "singularName": "finance-tag",
+    "pluralName": "finance-tags",
+    "displayName": "Finance Tag",
+    "description": "Transaction tags"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "workspace_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "name": {
+      "type": "string",
+      "required": true
+    }
+  }
+}

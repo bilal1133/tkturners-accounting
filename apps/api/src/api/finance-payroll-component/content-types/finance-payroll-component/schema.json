@@ -1,0 +1,25 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_payroll_components",
+  "info": {
+    "singularName": "finance-payroll-component",
+    "pluralName": "finance-payroll-components",
+    "displayName": "Finance Payroll Component",
+    "description": "Component breakdown for payroll entry"
+  },
+  "options": { "draftAndPublish": false },
+  "pluginOptions": {},
+  "attributes": {
+    "payroll_entry_id": { "type": "biginteger", "required": true },
+    "component_type": {
+      "type": "enumeration",
+      "enum": ["EARNING", "DEDUCTION", "INFO"],
+      "required": true
+    },
+    "component_code": { "type": "string", "required": true },
+    "label": { "type": "string", "required": true },
+    "amount_minor": { "type": "biginteger", "required": true },
+    "is_system": { "type": "boolean", "default": true },
+    "sort_order": { "type": "integer", "default": 0 }
+  }
+}

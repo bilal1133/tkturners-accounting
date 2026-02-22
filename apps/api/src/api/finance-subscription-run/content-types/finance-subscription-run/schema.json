@@ -1,0 +1,36 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_subscription_runs",
+  "info": {
+    "singularName": "finance-subscription-run",
+    "pluralName": "finance-subscription-runs",
+    "displayName": "Finance Subscription Run",
+    "description": "Subscription generation runs"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "subscription_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "run_date": {
+      "type": "date",
+      "required": true
+    },
+    "generated_transaction_id": {
+      "type": "biginteger"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["GENERATED", "SKIPPED", "FAILED"],
+      "required": true
+    },
+    "initiated_by_user_id": {
+      "type": "biginteger",
+      "required": true
+    }
+  }
+}

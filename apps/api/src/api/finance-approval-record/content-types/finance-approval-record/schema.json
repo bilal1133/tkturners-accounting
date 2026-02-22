@@ -1,0 +1,36 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_approval_records",
+  "info": {
+    "singularName": "finance-approval-record",
+    "pluralName": "finance-approval-records",
+    "displayName": "Finance Approval Record",
+    "description": "Approval timeline entries"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "workspace_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "transaction_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "action": {
+      "type": "enumeration",
+      "enum": ["APPROVE", "REJECT"],
+      "required": true
+    },
+    "actor_user_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "comment": {
+      "type": "text"
+    }
+  }
+}

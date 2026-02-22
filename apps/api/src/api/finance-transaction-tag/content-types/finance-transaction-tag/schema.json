@@ -1,0 +1,24 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_transaction_tags",
+  "info": {
+    "singularName": "finance-transaction-tag",
+    "pluralName": "finance-transaction-tags",
+    "displayName": "Finance Transaction Tag",
+    "description": "Transaction-tag links"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "transaction_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "tag_id": {
+      "type": "biginteger",
+      "required": true
+    }
+  }
+}

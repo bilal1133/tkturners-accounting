@@ -1,0 +1,32 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_notes",
+  "info": {
+    "singularName": "finance-note",
+    "pluralName": "finance-notes",
+    "displayName": "Finance Note",
+    "description": "Notes on transactions"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "workspace_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "transaction_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "body": {
+      "type": "text",
+      "required": true
+    },
+    "created_by_user_id": {
+      "type": "biginteger",
+      "required": true
+    }
+  }
+}
