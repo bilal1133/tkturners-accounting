@@ -71,6 +71,61 @@ function makeInitialDisbursementForm(loan?: EmployeeLoan): LoanDisbursementForm 
   };
 }
 
+function asNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function asNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeAccount(account: Account): Account {
+  return {
+    ...account,
+    id: asNumber(account.id),
+    owner_user_id: asNullableNumber(account.owner_user_id),
+    opening_balance_minor: asNumber(account.opening_balance_minor),
+    current_balance_minor: asNumber(account.current_balance_minor),
+  };
+}
+
+function normalizeEmployee(employee: Employee): Employee {
+  return {
+    ...employee,
+    id: asNumber(employee.id),
+    default_payout_account_id: asNumber(employee.default_payout_account_id),
+    default_funding_account_id: asNullableNumber(employee.default_funding_account_id),
+    department_id: asNullableNumber(employee.department_id),
+    linked_counterparty_id: asNumber(employee.linked_counterparty_id),
+    base_salary_minor: asNumber(employee.base_salary_minor),
+    default_allowances_minor: asNumber(employee.default_allowances_minor),
+    default_non_loan_deductions_minor: asNumber(employee.default_non_loan_deductions_minor),
+  };
+}
+
+function normalizeLoan(loan: EmployeeLoan): EmployeeLoan {
+  return {
+    ...loan,
+    id: asNumber(loan.id),
+    workspace_id: asNumber(loan.workspace_id),
+    employee_id: asNumber(loan.employee_id),
+    principal_minor: asNumber(loan.principal_minor),
+    annual_interest_bps: asNumber(loan.annual_interest_bps),
+    installment_minor: asNumber(loan.installment_minor),
+    outstanding_principal_minor: asNumber(loan.outstanding_principal_minor),
+    outstanding_interest_minor: asNumber(loan.outstanding_interest_minor),
+    disbursement_account_id: asNumber(loan.disbursement_account_id),
+    receivable_control_account_id: asNumber(loan.receivable_control_account_id),
+    disbursement_transaction_id: asNullableNumber(loan.disbursement_transaction_id),
+  };
+}
+
 export default function LoansPage() {
   const { token } = useAuth();
   const [loans, setLoans] = useState<EmployeeLoan[]>([]);
@@ -99,12 +154,16 @@ export default function LoansPage() {
       apiRequest<Account[]>('/finance/accounts', { token }),
     ]);
 
-    setLoans(loanPayload);
-    setEmployees(employeePayload);
-    setAccounts(accountPayload);
+    const normalizedLoans = loanPayload.map(normalizeLoan);
+    const normalizedEmployees = employeePayload.map(normalizeEmployee);
+    const normalizedAccounts = accountPayload.map(normalizeAccount);
+
+    setLoans(normalizedLoans);
+    setEmployees(normalizedEmployees);
+    setAccounts(normalizedAccounts);
     setLoanDisbursements((previous) => {
       const next: Record<number, LoanDisbursementForm> = { ...previous };
-      for (const loan of loanPayload) {
+      for (const loan of normalizedLoans) {
         if (!next[loan.id]) {
           next[loan.id] = makeInitialDisbursementForm(loan);
         }
@@ -112,23 +171,26 @@ export default function LoansPage() {
       return next;
     });
 
-    if (!loanForm.employee_id && employeePayload.length > 0) {
-      const activeEmployee = employeePayload.find((employee) => employee.status === 'ACTIVE') || employeePayload[0];
-      const payoutAccount = accountPayload.find((account) => account.id === activeEmployee.default_payout_account_id);
+    if (!loanForm.employee_id && normalizedEmployees.length > 0) {
+      const activeEmployee =
+        normalizedEmployees.find((employee) => employee.status === 'ACTIVE') || normalizedEmployees[0];
+      const payoutAccount = normalizedAccounts.find(
+        (account) => account.id === activeEmployee.default_payout_account_id
+      );
 
       setLoanForm((prev) => ({
         ...prev,
         employee_id: activeEmployee.id,
         currency: activeEmployee.payroll_currency,
-        disbursement_account_id: payoutAccount?.id || accountPayload[0]?.id || 0,
+        disbursement_account_id: payoutAccount?.id || normalizedAccounts[0]?.id || 0,
       }));
     }
 
-    if (!repaymentForm.cash_account_id && accountPayload.length > 0) {
-      const firstCash = accountPayload.find((account) => account.account_kind !== 'LOAN_RECEIVABLE_CONTROL');
+    if (!repaymentForm.cash_account_id && normalizedAccounts.length > 0) {
+      const firstCash = normalizedAccounts.find((account) => account.account_kind !== 'LOAN_RECEIVABLE_CONTROL');
       setRepaymentForm((prev) => ({
         ...prev,
-        cash_account_id: firstCash?.id || accountPayload[0].id,
+        cash_account_id: firstCash?.id || normalizedAccounts[0].id,
       }));
     }
   };
@@ -168,15 +230,22 @@ export default function LoansPage() {
 
       if (createAndDisburse) {
         const transferFeeAmount = createDisbursementForm.transfer_fee_amount_minor.trim();
+        const sourceAmountMinor =
+          createDisbursementIsCrossCurrency && createDisbursementForm.from_amount_minor.trim()
+            ? Number(createDisbursementForm.from_amount_minor)
+            : undefined;
+        const fxRate =
+          createDisbursementIsCrossCurrency && createDisbursementForm.fx_rate.trim()
+            ? Number(createDisbursementForm.fx_rate)
+            : undefined;
+
         await apiRequest(`/finance/loans/${createdLoan.id}/disburse`, {
           token,
           method: 'POST',
           body: {
             disbursement_date: createDisbursementForm.disbursement_date || undefined,
-            from_amount_minor: createDisbursementForm.from_amount_minor.trim()
-              ? Number(createDisbursementForm.from_amount_minor)
-              : undefined,
-            fx_rate: createDisbursementForm.fx_rate.trim() ? Number(createDisbursementForm.fx_rate) : undefined,
+            from_amount_minor: sourceAmountMinor,
+            fx_rate: fxRate,
             transfer_fee_amount_minor: transferFeeAmount ? Number(transferFeeAmount) : undefined,
             transfer_fee_currency: transferFeeAmount ? createDisbursementSourceCurrency : undefined,
             transfer_fee_description: createDisbursementForm.transfer_fee_description.trim() || undefined,
@@ -272,7 +341,9 @@ export default function LoansPage() {
   };
 
   const selectedEmployee = employees.find((employee) => employee.id === Number(loanForm.employee_id));
-  const selectedDisbursementAccount = cashAccounts.find((account) => account.id === Number(loanForm.disbursement_account_id));
+  const selectedDisbursementAccount = cashAccounts.find(
+    (account) => account.id === Number(loanForm.disbursement_account_id)
+  );
   const loanCurrency = selectedEmployee?.payroll_currency || loanForm.currency;
   const createDisbursementSourceCurrency = selectedDisbursementAccount?.currency || loanCurrency;
   const createDisbursementIsCrossCurrency = createDisbursementSourceCurrency !== loanCurrency;
@@ -282,6 +353,11 @@ export default function LoansPage() {
     Number(createDisbursementForm.from_amount_minor) > 0
       ? Number(loanForm.principal_minor) / Number(createDisbursementForm.from_amount_minor)
       : null;
+  const createSourceAmountMinor = createDisbursementIsCrossCurrency
+    ? asNumber(createDisbursementForm.from_amount_minor)
+    : asNumber(loanForm.principal_minor);
+  const createTransferFeeMinor = asNumber(createDisbursementForm.transfer_fee_amount_minor);
+  const createTotalSourceDebitMinor = createSourceAmountMinor + createTransferFeeMinor;
 
   return (
     <section className="page">
@@ -416,8 +492,8 @@ export default function LoansPage() {
               Disburse immediately after loan creation
             </label>
             <p style={{ margin: 0, color: 'var(--muted)' }}>
-              Conversion path: {createDisbursementSourceCurrency} source account {'->'} {loanCurrency} employee
-              loan.
+              Conversion path: {createDisbursementSourceCurrency} funding account {'->'} {loanCurrency} loan
+              receivable account.
             </p>
             {createAndDisburse ? (
               <div className="form-grid">
@@ -432,7 +508,7 @@ export default function LoansPage() {
                   />
                 </label>
                 <label>
-                  Source Amount (minor, {createDisbursementSourceCurrency})
+                  Source Amount Debited (minor, {createDisbursementSourceCurrency})
                   <input
                     type="number"
                     min={1}
@@ -449,7 +525,7 @@ export default function LoansPage() {
                 </label>
                 {createDisbursementIsCrossCurrency ? (
                   <label>
-                    FX Rate ({createDisbursementSourceCurrency} {'->'} {loanCurrency})
+                    Conversion Rate ({createDisbursementSourceCurrency} {'->'} {loanCurrency})
                     <input
                       type="number"
                       min={0}
@@ -468,7 +544,7 @@ export default function LoansPage() {
                   </label>
                 )}
                 <label>
-                  Transfer Fee (minor, {createDisbursementSourceCurrency})
+                  Transaction Fee (minor, {createDisbursementSourceCurrency}, deducted from source)
                   <input
                     type="number"
                     min={0}
@@ -499,6 +575,11 @@ export default function LoansPage() {
                     {createDisbursementSourceCurrency}
                   </p>
                 ) : null}
+                <p style={{ margin: 0, color: 'var(--muted)' }}>
+                  Ledger preview: OUT {formatMinor(createTotalSourceDebitMinor, createDisbursementSourceCurrency)} from{' '}
+                  {selectedDisbursementAccount?.name || 'source account'} (includes fee), IN{' '}
+                  {formatMinor(asNumber(loanForm.principal_minor), loanCurrency)} to loan receivable account.
+                </p>
               </div>
             ) : null}
           </div>
