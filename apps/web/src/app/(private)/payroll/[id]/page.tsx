@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
@@ -53,6 +53,7 @@ function getStatusClassName(status: 'DRAFT' | 'APPROVED' | 'PAID') {
 
 export default function PayrollRunDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const payrollRunId = Number(params.id);
   const { token } = useAuth();
 
@@ -64,6 +65,7 @@ export default function PayrollRunDetailPage() {
   const [loanDeductionConfig, setLoanDeductionConfig] = useState<Record<number, LoanDeductionControl>>({});
   const [savingLoanEntryId, setSavingLoanEntryId] = useState<number | null>(null);
   const [paying, setPaying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const cashAccounts = useMemo(
@@ -267,6 +269,10 @@ export default function PayrollRunDetailPage() {
   const payRun = async (runOverride?: PayrollRun | null) => {
     const effectiveRun = runOverride || run;
     if (!token || !payrollRunId || !effectiveRun) return;
+    if (effectiveRun.status !== 'APPROVED') {
+      setError('Payroll run must be approved before payment.');
+      return;
+    }
 
     const payableEntries = (effectiveRun.entries || []).filter((entry) => entry.status !== 'PAID');
     if (payableEntries.length === 0) {
@@ -291,10 +297,11 @@ export default function PayrollRunDetailPage() {
 
       const payload: Record<string, unknown> = {
         entry_id: entry.id,
-        to_account_id: toAccountId,
-        to_amount_minor: Number(entry.net_paid_minor),
-        to_currency: entry.currency,
       };
+
+      if (toAccountId > 0) {
+        payload.to_account_id = toAccountId;
+      }
 
       if (fromAccountId > 0) {
         payload.from_account_id = fromAccountId;
@@ -306,6 +313,12 @@ export default function PayrollRunDetailPage() {
 
       if (config.fx_rate.trim()) {
         payload.fx_rate = Number(config.fx_rate);
+      }
+
+      const netPaidMinor = Number(entry.net_paid_minor || 0);
+      if (netPaidMinor > 0) {
+        payload.to_amount_minor = netPaidMinor;
+        payload.to_currency = entry.currency;
       }
 
       if (config.transfer_fee_amount_minor.trim() && Number(config.transfer_fee_amount_minor) > 0) {
@@ -385,6 +398,34 @@ export default function PayrollRunDetailPage() {
     }
   };
 
+  const deleteRun = async () => {
+    if (!token || !run || !payrollRunId) return;
+    if (run.status === 'PAID') {
+      setError('Paid payroll runs cannot be deleted.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete payroll run ${run.period_month}? This removes generated entries for this run.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeleting(true);
+      await apiRequest(`/finance/payroll-runs/${payrollRunId}`, {
+        token,
+        method: 'DELETE',
+      });
+      setError(null);
+      router.push('/payroll');
+      router.refresh();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete payroll run');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <section className="page">
       <PageHeader
@@ -401,8 +442,21 @@ export default function PayrollRunDetailPage() {
             <button className="ghost-button" type="button" onClick={() => runAction('approve')}>
               Approve
             </button>
-            <button className="primary-button" type="button" onClick={() => payRun()} disabled={paying}>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => payRun()}
+              disabled={paying || run?.status !== 'APPROVED'}
+            >
               {paying ? 'Paying...' : 'Pay Run'}
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={deleteRun}
+              disabled={deleting || run?.status === 'PAID'}
+            >
+              {deleting ? 'Deleting...' : 'Delete Run'}
             </button>
           </>
         }
