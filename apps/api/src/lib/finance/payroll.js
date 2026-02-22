@@ -17,11 +17,13 @@ const { assert, HttpError } = require('./errors');
 const { knex, getUncategorizedCategoryId } = require('./db');
 const { addAuditLog } = require('./audit');
 const { createTransaction, getWorkspaceSettings } = require('./transactions');
+const { lastFridayOfMonth } = require('./utils');
 const {
   toSafeMinor,
   computePayrollAmounts,
   calculateMonthlyInterestMinor,
   allocateLoanPayment,
+  allocateLoanPrincipalOnlyPayment,
 } = require('./payroll-utils');
 
 const EmployeeUpdateSchema = z
@@ -32,6 +34,7 @@ const EmployeeUpdateSchema = z
     join_date: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/).nullable().optional(),
     status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
     payroll_currency: z.string().trim().length(3).transform((v) => v.toUpperCase()).optional(),
+    settlement_iban: z.string().trim().min(5).max(64).optional(),
     default_payout_account_id: z.number().int().positive().optional(),
     default_funding_account_id: z.number().int().positive().nullable().optional(),
     department_id: z.number().int().positive().nullable().optional(),
@@ -233,6 +236,10 @@ function normalizeEmployeePayload(payload = {}) {
     normalized.default_non_loan_deductions_minor
   );
 
+  if (normalized.settlement_iban !== undefined && normalized.settlement_iban !== null) {
+    normalized.settlement_iban = String(normalized.settlement_iban).trim().toUpperCase();
+  }
+
   if (normalized.join_date !== undefined) {
     if (normalized.join_date === null || String(normalized.join_date).trim() === '') {
       normalized.join_date = null;
@@ -253,6 +260,17 @@ function normalizeLoanCreatePayload(payload = {}) {
   normalized.receivable_control_account_id = normalizeOptionalNumericField(
     normalized.receivable_control_account_id
   );
+
+  if (typeof normalized.first_due_date === 'string') {
+    const trimmed = normalized.first_due_date.trim();
+    if (/^\d{4}-\d{2}$/.test(trimmed)) {
+      const canonicalDate = lastFridayOfMonth(trimmed);
+      assert(canonicalDate, 400, 'Invalid loan payload.', {
+        fieldErrors: { first_due_date: ['Invalid'] },
+      });
+      normalized.first_due_date = canonicalDate;
+    }
+  }
 
   normalizeOptionalDateField(normalized, 'first_due_date', 'Invalid loan payload.');
 
@@ -730,6 +748,7 @@ async function createEmployee(workspaceId, actorUserId, payload) {
       join_date: input.join_date || null,
       status: input.status,
       payroll_currency: input.payroll_currency,
+      settlement_iban: input.settlement_iban,
       default_payout_account_id: input.default_payout_account_id,
       default_funding_account_id: fundingAccountId,
       department_id: department?.id || null,
@@ -833,6 +852,7 @@ async function updateEmployee(workspaceId, actorUserId, employeeId, payload) {
   if (input.email !== undefined) updates.email = input.email;
   if (input.join_date !== undefined) updates.join_date = input.join_date;
   if (input.status !== undefined) updates.status = input.status;
+  if (input.settlement_iban !== undefined) updates.settlement_iban = input.settlement_iban;
   if (input.base_salary_minor !== undefined) updates.base_salary_minor = input.base_salary_minor;
   if (input.default_allowances_minor !== undefined) {
     updates.default_allowances_minor = input.default_allowances_minor;
@@ -929,7 +949,9 @@ async function getPayrollRun(workspaceId, payrollRunId) {
       'default_funding_account.name as funding_account_name',
       'payout_from_account.name as payout_from_account_name',
       'payout_to_account.name as payout_to_account_name',
-      'l.status as loan_status'
+      'l.status as loan_status',
+      'l.installment_minor as loan_installment_minor',
+      'l.outstanding_principal_minor as loan_outstanding_principal_minor'
     )
     .from('finance_payroll_entries as e')
     .innerJoin('finance_employees as emp', 'emp.id', 'e.employee_id')
@@ -961,10 +983,26 @@ async function getPayrollRun(workspaceId, payrollRunId) {
 
   return {
     ...run,
-    entries: entries.map((entry) => ({
-      ...entry,
-      components: byEntryId[entry.id] || [],
-    })),
+    entries: entries.map((entry) => {
+      const {
+        loan_installment_minor: loanInstallmentMinor,
+        loan_outstanding_principal_minor: loanOutstandingPrincipalMinor,
+        ...entryData
+      } = entry;
+      const autoLoanDeductionMinor = computeAutoLoanDeductionMinor(
+        {
+          status: entry.loan_status,
+          installment_minor: loanInstallmentMinor,
+          outstanding_principal_minor: loanOutstandingPrincipalMinor,
+        },
+        entry.base_salary_minor
+      );
+      return {
+        ...entryData,
+        auto_loan_deduction_minor: autoLoanDeductionMinor,
+        components: byEntryId[entry.id] || [],
+      };
+    }),
   };
 }
 
@@ -1028,7 +1066,7 @@ async function syncPayrollComponents(payrollEntryId, data) {
 }
 
 async function ensureDueSchedulesForLoan(workspaceId, actorUserId, loan, upToDate) {
-  if (!loan || loan.status !== 'ACTIVE') {
+  if (!loan || !['ACTIVE', 'APPROVED'].includes(String(loan.status))) {
     return loan;
   }
 
@@ -1118,31 +1156,44 @@ async function getOpenLoanRows(loanId, asOfDate) {
     .orderBy('installment_no', 'asc');
 }
 
-async function getLoanPlannedDeductionMinor(workspaceId, actorUserId, loan, asOfDate) {
-  const refreshed = await ensureDueSchedulesForLoan(workspaceId, actorUserId, loan, asOfDate);
-  const rows = await getOpenLoanRows(loan.id, asOfDate);
-
-  let total = 0;
-  for (const row of rows) {
-    const principalRemaining = Math.max(
-      toSafeMinor(row.principal_due_minor) - toSafeMinor(row.principal_paid_minor),
-      0
-    );
-    const interestRemaining = Math.max(
-      toSafeMinor(row.interest_due_minor) - toSafeMinor(row.interest_paid_minor),
-      0
-    );
-    total += principalRemaining + interestRemaining;
+function computeAutoLoanDeductionMinor(loan, baseSalaryMinor) {
+  if (!loan || !['ACTIVE', 'APPROVED'].includes(String(loan.status))) {
+    return 0;
   }
+
+  const installmentMinor = toSafeMinor(loan.installment_minor);
+  const outstandingPrincipalMinor = toSafeMinor(loan.outstanding_principal_minor);
+  const baseMinor = toSafeMinor(baseSalaryMinor);
+
+  return Math.min(installmentMinor, outstandingPrincipalMinor, baseMinor);
+}
+
+async function getLoanPlannedDeductionMinor(workspaceId, actorUserId, loan, asOfDate, baseSalaryMinor) {
+  const refreshed = await ensureDueSchedulesForLoan(workspaceId, actorUserId, loan, asOfDate);
+  const plannedLoanDeductionMinor = computeAutoLoanDeductionMinor(refreshed, baseSalaryMinor);
 
   return {
     loan: refreshed,
-    planned_loan_deduction_minor: total,
+    planned_loan_deduction_minor: plannedLoanDeductionMinor,
   };
 }
 
 async function createPayrollRun(workspaceId, actorUserId, payload) {
-  const input = parseSchema(PayrollRunCreateSchema, payload, 'Invalid payroll run payload.');
+  const normalizedPayload = { ...(payload || {}) };
+  if (!normalizedPayload.payday_date && normalizedPayload.period_month) {
+    const autoDate = lastFridayOfMonth(String(normalizedPayload.period_month));
+    if (autoDate) {
+      normalizedPayload.payday_date = autoDate;
+      normalizedPayload.cutoff_date = autoDate;
+    }
+  }
+
+  const input = parseSchema(PayrollRunCreateSchema, normalizedPayload, 'Invalid payroll run payload.');
+  const canonicalRunDate = lastFridayOfMonth(input.period_month);
+  assert(canonicalRunDate, 400, 'Invalid payroll run payload.', {
+    fieldErrors: { period_month: ['Invalid'] },
+  });
+
   const existing = await knex()('finance_payroll_runs')
     .where({ workspace_id: workspaceId, period_month: input.period_month })
     .first();
@@ -1153,8 +1204,8 @@ async function createPayrollRun(workspaceId, actorUserId, payload) {
     .insert({
       workspace_id: workspaceId,
       period_month: input.period_month,
-      cutoff_date: input.cutoff_date || null,
-      payday_date: input.payday_date,
+      cutoff_date: canonicalRunDate,
+      payday_date: canonicalRunDate,
       status: 'DRAFT',
       approved_by_user_id: null,
       approved_at: null,
@@ -1178,10 +1229,94 @@ async function createPayrollRun(workspaceId, actorUserId, payload) {
   return getPayrollRun(workspaceId, run.id);
 }
 
+async function deletePayrollRun(workspaceId, actorUserId, payrollRunId) {
+  const existing = await knex()('finance_payroll_runs').where({ workspace_id: workspaceId, id: payrollRunId }).first();
+  assert(existing, 404, 'Payroll run not found.');
+  assert(existing.status !== 'PAID', 409, 'Paid payroll runs cannot be deleted.');
+
+  const entries = await knex()('finance_payroll_entries')
+    .select(
+      'id',
+      'status',
+      'salary_expense_transaction_id',
+      'loan_principal_repayment_transaction_id',
+      'loan_interest_income_transaction_id',
+      'payout_transfer_transaction_id',
+      'payout_transfer_fee_transaction_id'
+    )
+    .where({ workspace_id: workspaceId, payroll_run_id: payrollRunId });
+
+  const hasPostedTransactions = entries.some((entry) => {
+    return Boolean(
+      entry.salary_expense_transaction_id
+      || entry.loan_principal_repayment_transaction_id
+      || entry.loan_interest_income_transaction_id
+      || entry.payout_transfer_transaction_id
+      || entry.payout_transfer_fee_transaction_id
+    );
+  });
+
+  assert(
+    !hasPostedTransactions,
+    409,
+    'Payroll run has posted transactions and cannot be deleted.'
+  );
+
+  const entryIds = entries.map((entry) => Number(entry.id));
+  if (entryIds.length > 0) {
+    const repaymentCountRow = await knex()('finance_loan_repayments')
+      .where({ workspace_id: workspaceId })
+      .whereIn('linked_payroll_entry_id', entryIds)
+      .count('* as count')
+      .first();
+    const repaymentCount = Number(repaymentCountRow?.count || 0);
+    assert(
+      repaymentCount === 0,
+      409,
+      'Payroll run has linked loan repayments and cannot be deleted.'
+    );
+  }
+
+  await knex()('finance_payroll_runs').where({ workspace_id: workspaceId, id: payrollRunId }).delete();
+
+  await addAuditLog({
+    workspaceId,
+    actorUserId,
+    entityType: 'PAYROLL_RUN',
+    entityId: payrollRunId,
+    action: 'DELETE',
+    before: {
+      ...existing,
+      entries_count: entries.length,
+    },
+    after: null,
+  });
+
+  return {
+    deleted: true,
+    payroll_run_id: payrollRunId,
+    entries_deleted: entries.length,
+  };
+}
+
 async function generatePayrollRunEntries(workspace, actorUserId, payrollRunId) {
-  const run = await knex()('finance_payroll_runs').where({ workspace_id: workspace.id, id: payrollRunId }).first();
+  let run = await knex()('finance_payroll_runs').where({ workspace_id: workspace.id, id: payrollRunId }).first();
   assert(run, 404, 'Payroll run not found.');
   assert(run.status !== 'PAID', 409, 'Paid payroll runs cannot be regenerated.');
+  const canonicalRunDate = lastFridayOfMonth(run.period_month);
+  assert(canonicalRunDate, 400, 'Payroll run has invalid period month.');
+
+  if (run.cutoff_date !== canonicalRunDate || run.payday_date !== canonicalRunDate) {
+    const [normalizedRun] = await knex()('finance_payroll_runs')
+      .where({ id: run.id, workspace_id: workspace.id })
+      .update({
+        cutoff_date: canonicalRunDate,
+        payday_date: canonicalRunDate,
+        updated_at: new Date().toISOString(),
+      })
+      .returning('*');
+    run = normalizedRun;
+  }
 
   const employees = await knex()('finance_employees')
     .where({ workspace_id: workspace.id, status: 'ACTIVE' })
@@ -1190,24 +1325,6 @@ async function generatePayrollRunEntries(workspace, actorUserId, payrollRunId) {
   const createdOrUpdated = [];
 
   for (const employee of employees) {
-    let activeLoan = await knex()('finance_employee_loans')
-      .where({ workspace_id: workspace.id, employee_id: employee.id })
-      .whereIn('status', ['ACTIVE'])
-      .orderBy('id', 'desc')
-      .first();
-
-    let plannedLoanDeduction = 0;
-    if (activeLoan) {
-      const loanCalc = await getLoanPlannedDeductionMinor(
-        workspace.id,
-        actorUserId,
-        activeLoan,
-        run.payday_date
-      );
-      activeLoan = loanCalc.loan;
-      plannedLoanDeduction = loanCalc.planned_loan_deduction_minor;
-    }
-
     const existingEntry = await knex()('finance_payroll_entries')
       .where({ payroll_run_id: run.id, employee_id: employee.id })
       .first();
@@ -1217,6 +1334,25 @@ async function generatePayrollRunEntries(workspace, actorUserId, payrollRunId) {
     const nonLoanDeductionsMinor = existingEntry
       ? existingEntry.non_loan_deductions_minor
       : employee.default_non_loan_deductions_minor;
+
+    let activeLoan = await knex()('finance_employee_loans')
+      .where({ workspace_id: workspace.id, employee_id: employee.id })
+      .whereIn('status', ['ACTIVE', 'APPROVED'])
+      .orderBy('id', 'desc')
+      .first();
+
+    let plannedLoanDeduction = 0;
+    if (activeLoan) {
+      const loanCalc = await getLoanPlannedDeductionMinor(
+        workspace.id,
+        actorUserId,
+        activeLoan,
+        canonicalRunDate,
+        baseSalaryMinor
+      );
+      activeLoan = loanCalc.loan;
+      plannedLoanDeduction = loanCalc.planned_loan_deduction_minor;
+    }
 
     const amounts = computePayrollAmounts({
       baseSalaryMinor,
@@ -1306,8 +1442,21 @@ async function updatePayrollEntry(workspaceId, actorUserId, payrollRunId, entryI
   const baseSalaryMinor = input.base_salary_minor ?? existing.base_salary_minor;
   const allowancesMinor = input.allowances_minor ?? existing.allowances_minor;
   const nonLoanDeductionsMinor = input.non_loan_deductions_minor ?? existing.non_loan_deductions_minor;
-  const plannedLoanDeductionMinor =
-    input.planned_loan_deduction_minor ?? existing.planned_loan_deduction_minor;
+  let plannedLoanDeductionMinor = input.planned_loan_deduction_minor ?? existing.planned_loan_deduction_minor;
+
+  const activeLoan = existing.loan_id
+    ? await knex()('finance_employee_loans')
+        .where({ workspace_id: workspaceId, id: existing.loan_id, employee_id: existing.employee_id })
+        .whereIn('status', ['ACTIVE', 'APPROVED'])
+        .first()
+    : null;
+
+  if (activeLoan) {
+    const autoLoanDeductionMinor = computeAutoLoanDeductionMinor(activeLoan, baseSalaryMinor);
+    plannedLoanDeductionMinor = Math.min(toSafeMinor(plannedLoanDeductionMinor), autoLoanDeductionMinor);
+  } else {
+    plannedLoanDeductionMinor = 0;
+  }
 
   const amounts = computePayrollAmounts({
     baseSalaryMinor,
@@ -1426,7 +1575,10 @@ async function applyLoanPayment({
     openRows = await getOpenLoanRows(currentLoan.id, repaymentDate);
   }
 
-  const allocation = allocateLoanPayment(openRows, amountMinor);
+  const allocation =
+    source === 'PAYROLL'
+      ? allocateLoanPrincipalOnlyPayment(openRows, amountMinor)
+      : allocateLoanPayment(openRows, amountMinor);
   const principalPaid = toSafeMinor(allocation.principal_paid_minor);
   const interestPaid = toSafeMinor(allocation.interest_paid_minor);
   const totalPaid = principalPaid + interestPaid;
@@ -1436,7 +1588,8 @@ async function applyLoanPayment({
   assert(cashAccount.currency === currentLoan.currency, 400, 'Repayment cash account currency must match loan currency.');
 
   const uncategorizedCategoryId = await getUncategorizedCategoryId(workspace.id);
-  const loanInterestCategoryId = await getCategoryIdByName(workspace.id, 'Loan Interest');
+  const loanInterestCategoryId =
+    interestPaid > 0 ? await getCategoryIdByName(workspace.id, 'Loan Interest') : null;
 
   let principalTransferTx = null;
   let interestIncomeTx = null;
@@ -1871,7 +2024,7 @@ async function payPayrollRun(workspace, actorUserId, payrollRunId, payload) {
         .where({ workspace_id: workspace.id, id: entry.loan_id, employee_id: employee.id })
         .first();
 
-      if (loan && loan.status === 'ACTIVE') {
+      if (loan && ['ACTIVE', 'APPROVED'].includes(String(loan.status))) {
         const repaymentPosting = await applyLoanPayment({
           workspace,
           actorUserId,
@@ -2030,7 +2183,11 @@ async function createLoan(workspace, actorUserId, payload) {
   );
 
   const now = new Date().toISOString();
-  const nextDueDate = input.first_due_date || dayjs().add(1, 'month').format('YYYY-MM-DD');
+  const defaultDueDate = lastFridayOfMonth(dayjs().add(1, 'month').format('YYYY-MM'));
+  const nextDueDate = input.first_due_date || defaultDueDate;
+  assert(nextDueDate, 400, 'Invalid loan payload.', {
+    fieldErrors: { first_due_date: ['Invalid'] },
+  });
 
   const [loan] = await knex()('finance_employee_loans')
     .insert({
@@ -2262,7 +2419,7 @@ async function repayLoan(workspace, actorUserId, loanId, payload) {
   const input = parseSchema(LoanRepaymentInputSchema, normalizedPayload, 'Invalid loan repayment payload.');
   const loan = await knex()('finance_employee_loans').where({ workspace_id: workspace.id, id: loanId }).first();
   assert(loan, 404, 'Loan not found.');
-  assert(loan.status === 'ACTIVE', 409, 'Loan is not repayable in current status.');
+  assert(['ACTIVE', 'APPROVED'].includes(String(loan.status)), 409, 'Loan is not repayable in current status.');
 
   const posting = await applyLoanPayment({
     workspace,
@@ -2286,6 +2443,13 @@ async function repayLoan(workspace, actorUserId, loanId, payload) {
 
 async function getEmployeeTimeline(workspaceId, employeeId) {
   const employee = await getEmployee(workspaceId, employeeId);
+  const toNumberOrNull = (value) => {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
 
   const payrollEntries = await knex()
     .select(
@@ -2294,63 +2458,294 @@ async function getEmployeeTimeline(workspaceId, employeeId) {
       'r.payday_date',
       'r.status as payroll_run_status',
       'salary_tx.transaction_date as salary_sent_date',
-      'salary_tx.amount_minor as salary_amount_minor'
+      'salary_tx.amount_minor as salary_amount_minor',
+      'salary_tx.currency as salary_currency',
+      'salary_tx.status as salary_transaction_status',
+      'payout_from_account.name as payout_from_account_name',
+      'payout_to_account.name as payout_to_account_name'
     )
     .from('finance_payroll_entries as e')
     .innerJoin('finance_payroll_runs as r', 'r.id', 'e.payroll_run_id')
     .leftJoin('finance_transactions as salary_tx', 'salary_tx.id', 'e.salary_expense_transaction_id')
+    .leftJoin('finance_accounts as payout_from_account', 'payout_from_account.id', 'e.payout_from_account_id')
+    .leftJoin('finance_accounts as payout_to_account', 'payout_to_account.id', 'e.payout_to_account_id')
     .where('e.workspace_id', workspaceId)
     .andWhere('e.employee_id', employeeId)
     .orderBy('r.period_month', 'desc');
 
-  const loans = await knex()('finance_employee_loans')
-    .where({ workspace_id: workspaceId, employee_id: employeeId })
+  const loans = await knex()
+    .select(
+      'l.*',
+      'disbursement_account.name as disbursement_account_name',
+      'disbursement_account.currency as disbursement_account_currency',
+      'control_account.name as receivable_control_account_name',
+      'control_account.currency as receivable_control_account_currency'
+    )
+    .from('finance_employee_loans as l')
+    .leftJoin('finance_accounts as disbursement_account', 'disbursement_account.id', 'l.disbursement_account_id')
+    .leftJoin('finance_accounts as control_account', 'control_account.id', 'l.receivable_control_account_id')
+    .where('l.workspace_id', workspaceId)
+    .andWhere('l.employee_id', employeeId)
     .orderBy('id', 'desc');
 
   const loanIds = loans.map((loan) => loan.id);
   const repayments = loanIds.length
-    ? await knex()('finance_loan_repayments')
-        .where({ workspace_id: workspaceId, employee_id: employeeId })
+    ? await knex()
+        .select('lr.*', 'loan.currency as loan_currency')
+        .from('finance_loan_repayments as lr')
+        .innerJoin('finance_employee_loans as loan', 'loan.id', 'lr.loan_id')
+        .where('lr.workspace_id', workspaceId)
+        .andWhere('lr.employee_id', employeeId)
         .whereIn('loan_id', loanIds)
         .orderBy('repayment_date', 'desc')
         .orderBy('id', 'desc')
     : [];
 
-  const transactions = await knex()('finance_transactions')
-    .where({ workspace_id: workspaceId })
-    .andWhereRaw("(metadata_json ->> 'employee_id')::bigint = ?", [employeeId])
+  const transactions = await knex()
+    .select(
+      't.*',
+      knex().raw("COALESCE(MAX(CASE WHEN l.direction = 'IN' THEN a.name END), '') as to_account_name"),
+      knex().raw("COALESCE(MAX(CASE WHEN l.direction = 'OUT' THEN a.name END), '') as from_account_name"),
+      knex().raw("COALESCE(MAX(CASE WHEN l.direction = 'IN' THEN l.currency END), t.currency) as to_account_currency"),
+      knex().raw("COALESCE(MAX(CASE WHEN l.direction = 'OUT' THEN l.currency END), t.currency) as from_account_currency")
+    )
+    .from('finance_transactions as t')
+    .leftJoin('finance_transaction_lines as l', 'l.transaction_id', 't.id')
+    .leftJoin('finance_accounts as a', 'a.id', 'l.account_id')
+    .where('t.workspace_id', workspaceId)
+    .andWhereRaw(
+      "(t.metadata_json ->> 'employee_id') ~ '^[0-9]+$' AND (t.metadata_json ->> 'employee_id')::bigint = ?",
+      [employeeId]
+    )
+    .groupBy('t.id')
     .orderBy('transaction_date', 'desc')
     .orderBy('id', 'desc');
 
-  const events = [
-    ...payrollEntries.map((entry) => ({
+  const transactionById = new Map(
+    transactions.map((transaction) => {
+      const normalizedId = Number(transaction.id);
+      return [
+        normalizedId,
+        {
+          ...transaction,
+          id: normalizedId,
+          amount_minor: toSafeMinor(transaction.amount_minor),
+          from_account_name: transaction.from_account_name || null,
+          to_account_name: transaction.to_account_name || null,
+          from_account_currency: transaction.from_account_currency || transaction.currency || null,
+          to_account_currency: transaction.to_account_currency || transaction.currency || null,
+          metadata_json: normalizeJsonObject(transaction.metadata_json),
+        },
+      ];
+    })
+  );
+
+  const loanById = new Map(loans.map((loan) => [Number(loan.id), loan]));
+
+  const payrollEvents = payrollEntries.map((entry) => {
+    const payoutToAmountMinor =
+      entry.payout_to_amount_minor === null || entry.payout_to_amount_minor === undefined
+        ? toSafeMinor(entry.net_paid_minor)
+        : toSafeMinor(entry.payout_to_amount_minor);
+    const payoutFromAmountMinor =
+      entry.payout_from_amount_minor === null || entry.payout_from_amount_minor === undefined
+        ? payoutToAmountMinor
+        : toSafeMinor(entry.payout_from_amount_minor);
+
+    return {
       date: entry.salary_sent_date || entry.payday_date,
       type: 'PAYROLL',
       label: `Salary ${entry.period_month}`,
-      data: entry,
-    })),
-    ...loans.map((loan) => ({
+      data: {
+        payroll_entry_id: Number(entry.id),
+        payroll_run_id: Number(entry.payroll_run_id),
+        status: entry.status,
+        payroll_run_status: entry.payroll_run_status,
+        currency: entry.currency,
+        salary_sent_date: entry.salary_sent_date || null,
+        salary_expense_transaction_id: toNumberOrNull(entry.salary_expense_transaction_id),
+        salary_amount_minor:
+          entry.salary_amount_minor === null || entry.salary_amount_minor === undefined
+            ? null
+            : toSafeMinor(entry.salary_amount_minor),
+        salary_currency: entry.salary_currency || entry.currency,
+        net_paid_minor: toSafeMinor(entry.net_paid_minor),
+        gross_minor: toSafeMinor(entry.base_salary_minor) + toSafeMinor(entry.allowances_minor),
+        non_loan_deductions_minor: toSafeMinor(entry.non_loan_deductions_minor),
+        planned_loan_deduction_minor: toSafeMinor(entry.planned_loan_deduction_minor),
+        actual_loan_deduction_minor: toSafeMinor(entry.actual_loan_deduction_minor),
+        from_account_name: entry.payout_from_account_name || entry.payout_to_account_name || null,
+        to_account_name: entry.payout_to_account_name || null,
+        from_amount_minor: payoutFromAmountMinor,
+        from_currency: entry.payout_from_currency || entry.payout_to_currency || entry.currency || null,
+        to_amount_minor: payoutToAmountMinor,
+        to_currency: entry.payout_to_currency || entry.currency || null,
+        payout_fx_rate:
+          entry.payout_fx_rate === null || entry.payout_fx_rate === undefined
+            ? null
+            : Number(entry.payout_fx_rate),
+        payout_transfer_transaction_id: toNumberOrNull(entry.payout_transfer_transaction_id),
+        payout_transfer_fee_transaction_id: toNumberOrNull(entry.payout_transfer_fee_transaction_id),
+        payout_additional_fee_total_minor: toSafeMinor(entry.payout_additional_fee_total_minor),
+        payout_additional_fee_count: Number(entry.payout_additional_fee_count || 0),
+      },
+    };
+  });
+
+  const loanEvents = loans.map((loan) => {
+    const disbursementTransactionId = toNumberOrNull(loan.disbursement_transaction_id);
+    const disbursementTransaction = disbursementTransactionId
+      ? transactionById.get(disbursementTransactionId)
+      : null;
+    const disbursementMetadata = normalizeJsonObject(disbursementTransaction?.metadata_json);
+    const fromAmountMinor =
+      disbursementMetadata.disbursement_from_amount_minor === undefined ||
+      disbursementMetadata.disbursement_from_amount_minor === null
+        ? toSafeMinor(loan.principal_minor)
+        : toSafeMinor(disbursementMetadata.disbursement_from_amount_minor);
+    const toAmountMinor =
+      disbursementMetadata.disbursement_to_amount_minor === undefined ||
+      disbursementMetadata.disbursement_to_amount_minor === null
+        ? toSafeMinor(loan.principal_minor)
+        : toSafeMinor(disbursementMetadata.disbursement_to_amount_minor);
+    const transferFeeAmountMinor =
+      disbursementMetadata.disbursement_transfer_fee_amount_minor === undefined ||
+      disbursementMetadata.disbursement_transfer_fee_amount_minor === null
+        ? null
+        : toSafeMinor(disbursementMetadata.disbursement_transfer_fee_amount_minor);
+
+    return {
       date: loan.disbursement_date || loan.created_at?.slice(0, 10),
       type: 'LOAN',
       label: `Loan #${loan.id} ${loan.status}`,
-      data: loan,
-    })),
-    ...repayments.map((repayment) => ({
+      data: {
+        loan_id: Number(loan.id),
+        status: loan.status,
+        currency: loan.currency,
+        principal_minor: toSafeMinor(loan.principal_minor),
+        installment_minor: toSafeMinor(loan.installment_minor),
+        annual_interest_bps: Number(loan.annual_interest_bps || 0),
+        outstanding_principal_minor: toSafeMinor(loan.outstanding_principal_minor),
+        outstanding_interest_minor: toSafeMinor(loan.outstanding_interest_minor),
+        disbursement_transaction_id: disbursementTransactionId,
+        disbursement_date: loan.disbursement_date || null,
+        from_account_name:
+          disbursementTransaction?.from_account_name || loan.disbursement_account_name || null,
+        to_account_name:
+          disbursementTransaction?.to_account_name || loan.receivable_control_account_name || null,
+        from_amount_minor: fromAmountMinor,
+        from_currency:
+          disbursementMetadata.disbursement_from_currency ||
+          disbursementTransaction?.from_account_currency ||
+          loan.disbursement_account_currency ||
+          loan.currency,
+        to_amount_minor: toAmountMinor,
+        to_currency:
+          disbursementMetadata.disbursement_to_currency ||
+          disbursementTransaction?.to_account_currency ||
+          loan.receivable_control_account_currency ||
+          loan.currency,
+        payout_fx_rate:
+          disbursementMetadata.disbursement_fx_rate === undefined ||
+          disbursementMetadata.disbursement_fx_rate === null
+            ? null
+            : Number(disbursementMetadata.disbursement_fx_rate),
+        transfer_fee_amount_minor: transferFeeAmountMinor,
+        transfer_fee_currency: disbursementMetadata.disbursement_transfer_fee_currency || null,
+      },
+    };
+  });
+
+  const repaymentEvents = repayments.map((repayment) => {
+    const principalTransferTransactionId = toNumberOrNull(repayment.principal_transfer_transaction_id);
+    const interestIncomeTransactionId = toNumberOrNull(repayment.interest_income_transaction_id);
+    const principalTransaction = principalTransferTransactionId
+      ? transactionById.get(principalTransferTransactionId)
+      : null;
+    const interestTransaction = interestIncomeTransactionId
+      ? transactionById.get(interestIncomeTransactionId)
+      : null;
+    const linkedLoan = loanById.get(Number(repayment.loan_id));
+    const repaymentCurrency =
+      linkedLoan?.currency ||
+      repayment.loan_currency ||
+      principalTransaction?.to_account_currency ||
+      principalTransaction?.from_account_currency ||
+      interestTransaction?.currency ||
+      employee.payroll_currency;
+
+    return {
       date: repayment.repayment_date,
       type: 'LOAN_REPAYMENT',
-      label: `Loan repayment #${repayment.id}`,
-      data: repayment,
-    })),
+      label: `Loan repayment #${repayment.id} (${repayment.source})`,
+      data: {
+        loan_repayment_id: Number(repayment.id),
+        loan_id: Number(repayment.loan_id),
+        source: repayment.source,
+        status: linkedLoan?.status || null,
+        currency: repaymentCurrency,
+        principal_paid_minor: toSafeMinor(repayment.principal_paid_minor),
+        interest_paid_minor: toSafeMinor(repayment.interest_paid_minor),
+        total_paid_minor: toSafeMinor(repayment.total_paid_minor),
+        outstanding_principal_minor:
+          linkedLoan?.outstanding_principal_minor === undefined
+            ? null
+            : toSafeMinor(linkedLoan.outstanding_principal_minor),
+        outstanding_interest_minor:
+          linkedLoan?.outstanding_interest_minor === undefined
+            ? null
+            : toSafeMinor(linkedLoan.outstanding_interest_minor),
+        principal_transfer_transaction_id: principalTransferTransactionId,
+        interest_income_transaction_id: interestIncomeTransactionId,
+        from_account_name: principalTransaction?.from_account_name || null,
+        to_account_name: principalTransaction?.to_account_name || interestTransaction?.to_account_name || null,
+        from_amount_minor:
+          principalTransaction?.amount_minor === undefined
+            ? null
+            : toSafeMinor(principalTransaction.amount_minor),
+        from_currency:
+          principalTransaction?.from_account_currency ||
+          principalTransaction?.to_account_currency ||
+          repaymentCurrency,
+        to_amount_minor:
+          principalTransaction?.amount_minor === undefined
+            ? toSafeMinor(repayment.total_paid_minor)
+            : toSafeMinor(principalTransaction.amount_minor),
+        to_currency:
+          principalTransaction?.to_account_currency ||
+          interestTransaction?.to_account_currency ||
+          repaymentCurrency,
+      },
+    };
+  });
+
+  const events = [
+    ...payrollEvents,
+    ...loanEvents,
+    ...repaymentEvents,
   ]
     .filter((event) => Boolean(event.date))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
+  const activeLoan = loans.find((loan) => ['APPROVED', 'ACTIVE'].includes(String(loan.status))) || null;
+
   return {
-    employee,
+    employee: {
+      ...employee,
+      active_loan: activeLoan || employee.active_loan || null,
+    },
     payroll_entries: payrollEntries,
     loans,
     repayments,
-    transactions,
+    transactions: transactions.map((transaction) => ({
+      ...transaction,
+      metadata_json: normalizeJsonObject(transaction.metadata_json),
+      amount_minor: toSafeMinor(transaction.amount_minor),
+      from_account_name: transaction.from_account_name || null,
+      to_account_name: transaction.to_account_name || null,
+      from_account_currency: transaction.from_account_currency || transaction.currency || null,
+      to_account_currency: transaction.to_account_currency || transaction.currency || null,
+    })),
     events,
   };
 }
@@ -2720,6 +3115,7 @@ module.exports = {
   listPayrollRuns,
   getPayrollRun,
   createPayrollRun,
+  deletePayrollRun,
   generatePayrollRunEntries,
   updatePayrollEntry,
   approvePayrollRun,

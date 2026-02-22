@@ -21,6 +21,23 @@ function monthRange(month) {
   };
 }
 
+function lastFridayOfMonth(month) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month || ''))) {
+    return null;
+  }
+
+  let cursor = dayjs(`${month}-01`).endOf('month');
+  if (!cursor.isValid()) {
+    return null;
+  }
+
+  while (cursor.day() !== 5) {
+    cursor = cursor.subtract(1, 'day');
+  }
+
+  return cursor.format('YYYY-MM-DD');
+}
+
 function addSubscriptionInterval(dateString, frequency, intervalCount) {
   const base = dayjs(dateString);
   const interval = Math.max(Number(intervalCount || 1), 1);
@@ -52,6 +69,7 @@ module.exports = {
   toMinorUnits,
   fromMinorUnits,
   monthRange,
+  lastFridayOfMonth,
   addSubscriptionInterval,
   isIsoDate,
   stringifyError,

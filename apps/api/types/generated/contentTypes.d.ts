@@ -827,6 +827,7 @@ export interface ApiFinanceEmployeeFinanceEmployee
     notes: Schema.Attribute.Text;
     payroll_currency: Schema.Attribute.String & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
+    settlement_iban: Schema.Attribute.String;
     status: Schema.Attribute.Enumeration<['ACTIVE', 'INACTIVE']> &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'ACTIVE'>;

@@ -56,6 +56,7 @@ module.exports = {
     { method: 'GET', path: '/finance/payroll-runs', handler: 'finance.listPayrollRuns' },
     { method: 'POST', path: '/finance/payroll-runs', handler: 'finance.createPayrollRun' },
     { method: 'GET', path: '/finance/payroll-runs/:id', handler: 'finance.getPayrollRun' },
+    { method: 'DELETE', path: '/finance/payroll-runs/:id', handler: 'finance.deletePayrollRun' },
     { method: 'POST', path: '/finance/payroll-runs/:id/generate', handler: 'finance.generatePayrollRun' },
     { method: 'PATCH', path: '/finance/payroll-runs/:id/entries/:entryId', handler: 'finance.updatePayrollEntry' },
     { method: 'POST', path: '/finance/payroll-runs/:id/approve', handler: 'finance.approvePayrollRun' },

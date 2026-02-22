@@ -53,6 +53,7 @@ const {
   listPayrollRuns,
   getPayrollRun,
   createPayrollRun,
+  deletePayrollRun,
   generatePayrollRunEntries,
   updatePayrollEntry,
   approvePayrollRun,
@@ -584,6 +585,16 @@ module.exports = {
       requireRole(membership, 'ACCOUNTANT');
       ctx.body = await createPayrollRun(membership.workspace_id, user.id, ctx.request.body || {});
       ctx.status = 201;
+    } catch (error) {
+      handleControllerError(ctx, error);
+    }
+  },
+
+  async deletePayrollRun(ctx) {
+    try {
+      const { user, membership } = await requireMembership(ctx);
+      requireRole(membership, 'ACCOUNTANT');
+      ctx.body = await deletePayrollRun(membership.workspace_id, user.id, Number(ctx.params.id));
     } catch (error) {
       handleControllerError(ctx, error);
     }

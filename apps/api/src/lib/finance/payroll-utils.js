@@ -19,7 +19,7 @@ function computePayrollAmounts({
 
   const grossMinor = base + allowances;
   const expenseBaseMinor = Math.max(grossMinor - nonLoanDeductions, 0);
-  const actualLoanDeductionMinor = Math.min(plannedLoanDeduction, expenseBaseMinor);
+  const actualLoanDeductionMinor = Math.min(plannedLoanDeduction, base, expenseBaseMinor);
   const netPaidMinor = Math.max(expenseBaseMinor - actualLoanDeductionMinor, 0);
 
   return {
@@ -113,10 +113,63 @@ function allocateLoanPayment(scheduleRows, paymentMinor) {
   };
 }
 
+function allocateLoanPrincipalOnlyPayment(scheduleRows, paymentMinor) {
+  let remaining = toSafeMinor(paymentMinor);
+
+  const sorted = [...(scheduleRows || [])].sort((a, b) => {
+    if (a.due_date === b.due_date) {
+      return Number(a.id || 0) - Number(b.id || 0);
+    }
+    return String(a.due_date).localeCompare(String(b.due_date));
+  });
+
+  let principalPaidTotal = 0;
+
+  const updatedRows = sorted.map((row) => {
+    const updated = {
+      ...row,
+      principal_paid_minor: toSafeMinor(row.principal_paid_minor),
+      interest_paid_minor: toSafeMinor(row.interest_paid_minor),
+    };
+
+    if (remaining > 0) {
+      const principalRemaining = Math.max(
+        toSafeMinor(updated.principal_due_minor) - toSafeMinor(updated.principal_paid_minor),
+        0
+      );
+      const principalPay = Math.min(remaining, principalRemaining);
+      if (principalPay > 0) {
+        updated.principal_paid_minor += principalPay;
+        remaining -= principalPay;
+        principalPaidTotal += principalPay;
+      }
+    }
+
+    const dueAfter = remainingDueMinor(updated);
+    if (dueAfter.principal_remaining_minor === 0 && dueAfter.interest_remaining_minor === 0) {
+      updated.status = 'PAID';
+    } else if (updated.principal_paid_minor > 0 || updated.interest_paid_minor > 0) {
+      updated.status = 'PARTIAL';
+    } else {
+      updated.status = 'DUE';
+    }
+
+    return updated;
+  });
+
+  return {
+    updated_rows: updatedRows,
+    principal_paid_minor: principalPaidTotal,
+    interest_paid_minor: 0,
+    unapplied_minor: remaining,
+  };
+}
+
 module.exports = {
   toSafeMinor,
   computePayrollAmounts,
   calculateMonthlyInterestMinor,
   remainingDueMinor,
   allocateLoanPayment,
+  allocateLoanPrincipalOnlyPayment,
 };

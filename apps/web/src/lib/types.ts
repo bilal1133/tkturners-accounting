@@ -55,6 +55,7 @@ export type Employee = {
   join_date: string | null;
   status: 'ACTIVE' | 'INACTIVE';
   payroll_currency: string;
+  settlement_iban: string | null;
   default_payout_account_id: number;
   default_funding_account_id: number | null;
   department_id: number | null;
@@ -127,6 +128,7 @@ export type PayrollEntry = {
   allowances_minor: number;
   non_loan_deductions_minor: number;
   planned_loan_deduction_minor: number;
+  auto_loan_deduction_minor?: number;
   actual_loan_deduction_minor: number;
   net_paid_minor: number;
   status: 'DRAFT' | 'APPROVED' | 'PAID';

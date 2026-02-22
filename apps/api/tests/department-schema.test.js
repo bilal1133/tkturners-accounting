@@ -23,6 +23,7 @@ describe('department and employee schemas', () => {
     const payload = EmployeeInputSchema.parse({
       full_name: 'John Doe',
       payroll_currency: 'USD',
+      settlement_iban: 'PK36SCBL0000001123456702',
       default_payout_account_id: 10,
       department_id: null,
       base_salary_minor: 1000,

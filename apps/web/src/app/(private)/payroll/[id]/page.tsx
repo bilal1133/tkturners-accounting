@@ -5,13 +5,14 @@ import { useParams } from 'next/navigation';
 import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
-import { apiRequest } from '@/lib/api';
+import { apiDownload, apiRequest } from '@/lib/api';
 import { formatMinor } from '@/lib/format';
 import { validateWithSchema } from '@/lib/validation';
 import type { Account, PayrollRun } from '@/lib/types';
 import { FormActions, FormField } from '@/components/ui/form-field';
 import { Modal } from '@/components/ui/modal';
 import { PageHeader } from '@/components/ui/page-header';
+import styles from './page.module.css';
 
 type EditEntryForm = {
   entry_id: number;
@@ -31,6 +32,11 @@ type EntryPaymentConfig = {
   extra_fee_description: string;
 };
 
+type LoanDeductionControl = {
+  include: boolean;
+  amount_minor: string;
+};
+
 const editEntrySchema = z.object({
   entry_id: z.number().int().positive(),
   base_salary_minor: z.number().int().nonnegative('Base salary cannot be negative.'),
@@ -38,6 +44,12 @@ const editEntrySchema = z.object({
   non_loan_deductions_minor: z.number().int().nonnegative('Deductions cannot be negative.'),
   planned_loan_deduction_minor: z.number().int().nonnegative('Loan deduction cannot be negative.'),
 });
+
+function getStatusClassName(status: 'DRAFT' | 'APPROVED' | 'PAID') {
+  if (status === 'PAID') return styles.statusPaid;
+  if (status === 'APPROVED') return styles.statusApproved;
+  return styles.statusDraft;
+}
 
 export default function PayrollRunDetailPage() {
   const params = useParams<{ id: string }>();
@@ -49,6 +61,8 @@ export default function PayrollRunDetailPage() {
   const [editing, setEditing] = useState<EditEntryForm | null>(null);
   const [defaultFromAccountId, setDefaultFromAccountId] = useState(0);
   const [paymentConfig, setPaymentConfig] = useState<Record<number, EntryPaymentConfig>>({});
+  const [loanDeductionConfig, setLoanDeductionConfig] = useState<Record<number, LoanDeductionControl>>({});
+  const [savingLoanEntryId, setSavingLoanEntryId] = useState<number | null>(null);
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,9 +76,13 @@ export default function PayrollRunDetailPage() {
   }, [cashAccounts]);
 
   const currency = useMemo(() => run?.entries?.[0]?.currency || 'USD', [run?.entries]);
+  const payableCount = useMemo(
+    () => (run?.entries || []).filter((entry) => entry.status !== 'PAID').length,
+    [run?.entries]
+  );
 
   const load = async () => {
-    if (!token || !payrollRunId) return;
+    if (!token || !payrollRunId) return null;
 
     const [runPayload, accountsPayload] = await Promise.all([
       apiRequest<PayrollRun>(`/finance/payroll-runs/${payrollRunId}`, { token }),
@@ -114,6 +132,24 @@ export default function PayrollRunDetailPage() {
 
       return next;
     });
+
+    setLoanDeductionConfig((prev) => {
+      const next: Record<number, LoanDeductionControl> = { ...prev };
+      for (const entry of runPayload.entries || []) {
+        const include = Number(entry.planned_loan_deduction_minor || 0) > 0;
+        const amountMinor =
+          Number(entry.planned_loan_deduction_minor || 0) > 0
+            ? Number(entry.planned_loan_deduction_minor)
+            : Number(entry.auto_loan_deduction_minor || 0);
+        next[entry.id] = {
+          include,
+          amount_minor: String(amountMinor),
+        };
+      }
+      return next;
+    });
+
+    return runPayload;
   };
 
   useEffect(() => {
@@ -145,6 +181,66 @@ export default function PayrollRunDetailPage() {
     });
   };
 
+  const setLoanDeductionInput = (entryId: number, updates: Partial<LoanDeductionControl>) => {
+    setLoanDeductionConfig((prev) => {
+      const current = prev[entryId] || { include: false, amount_minor: '0' };
+      return {
+        ...prev,
+        [entryId]: {
+          ...current,
+          ...updates,
+        },
+      };
+    });
+  };
+
+  const saveLoanDeduction = async (entry: NonNullable<PayrollRun['entries']>[number], override?: LoanDeductionControl) => {
+    if (!token || !payrollRunId) return;
+
+    const current = override || loanDeductionConfig[entry.id] || { include: false, amount_minor: '0' };
+    const hasActiveLoan = Boolean(
+      entry.loan_id && ['ACTIVE', 'APPROVED'].includes(String(entry.loan_status || ''))
+    );
+    const autoAmountMinor = Number(entry.auto_loan_deduction_minor || 0);
+
+    let plannedLoanDeductionMinor = 0;
+    if (hasActiveLoan && current.include) {
+      const rawAmount = current.amount_minor.trim();
+      const parsed = rawAmount ? Number(rawAmount) : autoAmountMinor;
+      plannedLoanDeductionMinor = Number.isFinite(parsed)
+        ? Math.max(0, Math.round(parsed))
+        : Math.max(0, autoAmountMinor);
+    }
+
+    try {
+      setSavingLoanEntryId(entry.id);
+      await apiRequest(`/finance/payroll-runs/${payrollRunId}/entries/${entry.id}`, {
+        token,
+        method: 'PATCH',
+        body: {
+          planned_loan_deduction_minor: plannedLoanDeductionMinor,
+        },
+      });
+      await load();
+      setError(null);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Failed to update loan deduction');
+    } finally {
+      setSavingLoanEntryId(null);
+    }
+  };
+
+  const downloadPayrollCsv = async () => {
+    if (!token || !run?.period_month) return;
+
+    try {
+      await apiDownload(`/finance/exports/payroll.csv?month=${encodeURIComponent(run.period_month)}`, token);
+      setError(null);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : 'Failed to download payroll CSV');
+    }
+  };
+
   const runAction = async (action: 'generate' | 'approve') => {
     if (!token || !payrollRunId) return;
 
@@ -154,17 +250,25 @@ export default function PayrollRunDetailPage() {
         method: 'POST',
         body: {},
       });
-      await load();
+      const refreshedRun = await load();
+      if (action === 'approve') {
+        const markPaid = window.confirm('Payroll approved. Mark as paid now?');
+        if (markPaid) {
+          await payRun(refreshedRun);
+          return;
+        }
+      }
       setError(null);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : `Failed to ${action} payroll run`);
     }
   };
 
-  const payRun = async () => {
-    if (!token || !payrollRunId || !run) return;
+  const payRun = async (runOverride?: PayrollRun | null) => {
+    const effectiveRun = runOverride || run;
+    if (!token || !payrollRunId || !effectiveRun) return;
 
-    const payableEntries = (run.entries || []).filter((entry) => entry.status !== 'PAID');
+    const payableEntries = (effectiveRun.entries || []).filter((entry) => entry.status !== 'PAID');
     if (payableEntries.length === 0) {
       setError('No payable entries found.');
       return;
@@ -288,13 +392,16 @@ export default function PayrollRunDetailPage() {
         title={run ? `Payroll ${run.period_month}` : 'Payroll'}
         actions={
           <>
+            <button className="ghost-button" type="button" onClick={downloadPayrollCsv} disabled={!run?.period_month}>
+              Download Payroll CSV
+            </button>
             <button className="ghost-button" type="button" onClick={() => runAction('generate')}>
               Generate
             </button>
             <button className="ghost-button" type="button" onClick={() => runAction('approve')}>
               Approve
             </button>
-            <button className="primary-button" type="button" onClick={payRun} disabled={paying}>
+            <button className="primary-button" type="button" onClick={() => payRun()} disabled={paying}>
               {paying ? 'Paying...' : 'Pay Run'}
             </button>
           </>
@@ -303,19 +410,40 @@ export default function PayrollRunDetailPage() {
 
       {error ? <p className="error-text">{error}</p> : null}
 
-      <div className="card">
-        <h3>Run Snapshot</h3>
-        <p>Status: {run?.status || '-'}</p>
-        <p>Payday: {run?.payday_date || '-'}</p>
-        <p>Entries: {run?.entries?.length || 0}</p>
+      <div className={`card ${styles.snapshotCard}`}>
+        <div className={styles.snapshotHeader}>
+          <h3>Run Snapshot</h3>
+          <span className={`${styles.statusChip} ${getStatusClassName(run?.status || 'DRAFT')}`}>
+            {run?.status || 'DRAFT'}
+          </span>
+        </div>
+        <div className={styles.snapshotGrid}>
+          <div className={styles.snapshotItem}>
+            <p className={styles.snapshotLabel}>Payday</p>
+            <p className={styles.snapshotValue}>{run?.payday_date || '-'}</p>
+          </div>
+          <div className={styles.snapshotItem}>
+            <p className={styles.snapshotLabel}>Total Entries</p>
+            <p className={styles.snapshotValue}>{run?.entries?.length || 0}</p>
+          </div>
+          <div className={styles.snapshotItem}>
+            <p className={styles.snapshotLabel}>Payable Entries</p>
+            <p className={styles.snapshotValue}>{payableCount}</p>
+          </div>
+          <div className={styles.snapshotItem}>
+            <p className={styles.snapshotLabel}>Period</p>
+            <p className={styles.snapshotValue}>{run?.period_month || '-'}</p>
+          </div>
+        </div>
       </div>
 
-      <div className="card">
+      <div className={`card ${styles.defaultsCard}`}>
         <h3>Payout Defaults</h3>
-        <div className="form-grid">
+        <div className={`form-grid ${styles.defaultsGrid}`}>
           <label>
             Default Funding Account
             <select
+              className={styles.defaultAccountSelect}
               value={defaultFromAccountId}
               onChange={(event) => setDefaultFromAccountId(Number(event.target.value || 0))}
             >
@@ -328,8 +456,11 @@ export default function PayrollRunDetailPage() {
             </select>
           </label>
         </div>
-        <p>
+        <p className={styles.defaultsHint}>
           For cross-currency payroll: set a funding account, set destination employee account, and provide source amount + FX.
+        </p>
+        <p className={styles.defaultsHint}>
+          Loan deduction is capped automatically by remaining principal and base salary for each employee.
         </p>
       </div>
 
@@ -426,8 +557,8 @@ export default function PayrollRunDetailPage() {
         ) : null}
       </Modal>
 
-      <div className="card table-wrap">
-        <table className="table">
+      <div className={`card table-wrap ${styles.payrollTableWrap}`}>
+        <table className={`table ${styles.payrollTable}`}>
           <thead>
             <tr>
               <th>Employee</th>
@@ -436,7 +567,9 @@ export default function PayrollRunDetailPage() {
               <th>Base</th>
               <th>Allowances</th>
               <th>Deductions</th>
-              <th>Loan Planned/Actual</th>
+              <th>Loan (Planned/Actual)</th>
+              <th>Include Loan</th>
+              <th>Loan Deduction (minor)</th>
               <th>Net Paid</th>
               <th>To Account</th>
               <th>From Account</th>
@@ -462,22 +595,99 @@ export default function PayrollRunDetailPage() {
 
               const destinationOptions = cashAccounts.filter((account) => account.currency === entry.currency);
               const rowDisabled = run.status === 'PAID' || entry.status === 'PAID';
+              const hasActiveLoan = Boolean(
+                entry.loan_id && ['ACTIVE', 'APPROVED'].includes(String(entry.loan_status || ''))
+              );
+              const loanControl = loanDeductionConfig[entry.id] || {
+                include: Number(entry.planned_loan_deduction_minor || 0) > 0,
+                amount_minor: String(
+                  Number(entry.planned_loan_deduction_minor || 0) || Number(entry.auto_loan_deduction_minor || 0)
+                ),
+              };
+              const loanControlDisabled =
+                rowDisabled || !hasActiveLoan || (savingLoanEntryId !== null && savingLoanEntryId === entry.id);
+              const linkedTransactions = [
+                entry.salary_expense_transaction_id ? `Salary #${entry.salary_expense_transaction_id}` : null,
+                entry.payout_transfer_transaction_id ? `Transfer #${entry.payout_transfer_transaction_id}` : null,
+                entry.payout_transfer_fee_transaction_id ? `Xfer Fee #${entry.payout_transfer_fee_transaction_id}` : null,
+                entry.loan_principal_repayment_transaction_id
+                  ? `Principal #${entry.loan_principal_repayment_transaction_id}`
+                  : null,
+                entry.loan_interest_income_transaction_id
+                  ? `Interest #${entry.loan_interest_income_transaction_id}`
+                  : null,
+                entry.payout_additional_fee_count ? `+${entry.payout_additional_fee_count} fee tx` : null,
+              ].filter(Boolean) as string[];
 
               return (
-                <tr key={entry.id}>
-                  <td>{entry.full_name}</td>
-                  <td>{entry.department_name || 'Unassigned'}</td>
-                  <td>{entry.status}</td>
-                  <td>{formatMinor(entry.base_salary_minor, entry.currency)}</td>
-                  <td>{formatMinor(entry.allowances_minor, entry.currency)}</td>
-                  <td>{formatMinor(entry.non_loan_deductions_minor, entry.currency)}</td>
-                  <td>
-                    {formatMinor(entry.planned_loan_deduction_minor, entry.currency)} /{' '}
-                    {formatMinor(entry.actual_loan_deduction_minor, entry.currency)}
+                <tr key={entry.id} className={rowDisabled ? styles.rowLocked : undefined}>
+                  <td className={styles.employeeCell}>
+                    <span className={styles.employeeName}>{entry.full_name || `Employee #${entry.employee_id}`}</span>
+                    <span className={styles.employeeMeta}>{entry.employee_code || '-'}</span>
                   </td>
-                  <td>{formatMinor(entry.net_paid_minor, entry.currency)}</td>
+                  <td className={styles.departmentCell}>{entry.department_name || 'Unassigned'}</td>
+                  <td>
+                    <span className={`${styles.statusChip} ${getStatusClassName(entry.status)}`}>{entry.status}</span>
+                  </td>
+                  <td className={styles.amountCell}>{formatMinor(entry.base_salary_minor, entry.currency)}</td>
+                  <td className={styles.amountCell}>{formatMinor(entry.allowances_minor, entry.currency)}</td>
+                  <td className={styles.amountCell}>{formatMinor(entry.non_loan_deductions_minor, entry.currency)}</td>
+                  <td className={styles.loanCell}>
+                    <span>{formatMinor(entry.planned_loan_deduction_minor, entry.currency)}</span>
+                    <span className={styles.loanMeta}>{formatMinor(entry.actual_loan_deduction_minor, entry.currency)}</span>
+                  </td>
+                  <td className={styles.loanToggleCell}>
+                    <label className={styles.loanToggleLabel}>
+                      <input
+                        type="checkbox"
+                        checked={hasActiveLoan ? loanControl.include : false}
+                        onChange={(event) => {
+                          const include = event.target.checked;
+                          const currentAmount = Number(loanControl.amount_minor);
+                          const autoAmount = Number(entry.auto_loan_deduction_minor || 0);
+                          const nextAmountMinor =
+                            include
+                              ? Number.isFinite(currentAmount) && currentAmount > 0
+                                ? Math.round(currentAmount)
+                                : autoAmount
+                              : 0;
+                          const nextControl: LoanDeductionControl = {
+                            include,
+                            amount_minor: String(nextAmountMinor),
+                          };
+                          setLoanDeductionInput(entry.id, nextControl);
+                          void saveLoanDeduction(entry, nextControl);
+                        }}
+                        disabled={loanControlDisabled}
+                      />
+                      <span>{hasActiveLoan ? 'Include' : 'No active loan'}</span>
+                    </label>
+                  </td>
+                  <td className={styles.loanInputCell}>
+                    <input
+                      className={styles.compactInput}
+                      type="number"
+                      min={0}
+                      value={loanControl.amount_minor}
+                      onChange={(event) =>
+                        setLoanDeductionInput(entry.id, {
+                          amount_minor: event.target.value,
+                        })
+                      }
+                      onBlur={() => {
+                        if (hasActiveLoan && loanControl.include) {
+                          void saveLoanDeduction(entry);
+                        }
+                      }}
+                      placeholder={String(Number(entry.auto_loan_deduction_minor || 0))}
+                      disabled={loanControlDisabled || !loanControl.include}
+                    />
+                    {savingLoanEntryId === entry.id ? <span className={styles.loanSaving}>Saving...</span> : null}
+                  </td>
+                  <td className={styles.amountCell}>{formatMinor(entry.net_paid_minor, entry.currency)}</td>
                   <td>
                     <select
+                      className={styles.accountSelect}
                       value={config.to_account_id}
                       onChange={(event) =>
                         setEntryPayment(entry.id, {
@@ -495,6 +705,7 @@ export default function PayrollRunDetailPage() {
                   </td>
                   <td>
                     <select
+                      className={styles.accountSelect}
                       value={config.from_account_id}
                       onChange={(event) =>
                         setEntryPayment(entry.id, {
@@ -513,6 +724,7 @@ export default function PayrollRunDetailPage() {
                   </td>
                   <td>
                     <input
+                      className={styles.compactInput}
                       type="number"
                       min={0}
                       value={config.from_amount_minor}
@@ -527,6 +739,7 @@ export default function PayrollRunDetailPage() {
                   </td>
                   <td>
                     <input
+                      className={styles.fxInput}
                       type="number"
                       min={0}
                       step="0.000001"
@@ -542,6 +755,7 @@ export default function PayrollRunDetailPage() {
                   </td>
                   <td>
                     <input
+                      className={styles.compactInput}
                       type="number"
                       min={0}
                       value={config.transfer_fee_amount_minor}
@@ -554,8 +768,9 @@ export default function PayrollRunDetailPage() {
                       disabled={rowDisabled}
                     />
                   </td>
-                  <td>
+                  <td className={styles.extraFeeCell}>
                     <input
+                      className={styles.compactInput}
                       type="number"
                       min={0}
                       value={config.extra_fee_amount_minor}
@@ -568,6 +783,7 @@ export default function PayrollRunDetailPage() {
                       disabled={rowDisabled}
                     />
                     <input
+                      className={styles.noteInput}
                       value={config.extra_fee_description}
                       onChange={(event) =>
                         setEntryPayment(entry.id, {
@@ -578,27 +794,22 @@ export default function PayrollRunDetailPage() {
                       disabled={rowDisabled}
                     />
                   </td>
-                  <td>
-                    {entry.salary_expense_transaction_id ? `Salary #${entry.salary_expense_transaction_id}` : '-'}
-                    {entry.payout_transfer_transaction_id
-                      ? ` | Transfer #${entry.payout_transfer_transaction_id}`
-                      : ''}
-                    {entry.payout_transfer_fee_transaction_id
-                      ? ` | Xfer Fee #${entry.payout_transfer_fee_transaction_id}`
-                      : ''}
-                    {entry.loan_principal_repayment_transaction_id
-                      ? ` | Principal #${entry.loan_principal_repayment_transaction_id}`
-                      : ''}
-                    {entry.loan_interest_income_transaction_id
-                      ? ` | Interest #${entry.loan_interest_income_transaction_id}`
-                      : ''}
-                    {entry.payout_additional_fee_count
-                      ? ` | +${entry.payout_additional_fee_count} fee tx`
-                      : ''}
+                  <td className={styles.linkedCell}>
+                    {linkedTransactions.length > 0 ? (
+                      <div className={styles.linkedList}>
+                        {linkedTransactions.map((txLabel) => (
+                          <span key={txLabel} className={styles.linkedPill}>
+                            {txLabel}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="muted-text">-</span>
+                    )}
                   </td>
                   <td>
                     <button
-                      className="ghost-button"
+                      className={`ghost-button ${styles.editButton}`}
                       type="button"
                       onClick={() =>
                         setEditing({
@@ -621,8 +832,9 @@ export default function PayrollRunDetailPage() {
         </table>
       </div>
 
-      <div className="card">
-        <p>Run currency preview: {currency}</p>
+      <div className={`card ${styles.infoCard}`}>
+        <p className={styles.infoLabel}>Run currency preview</p>
+        <p className={styles.infoValue}>{currency}</p>
       </div>
     </section>
   );

@@ -17,6 +17,7 @@ type EmployeeForm = {
   full_name: string;
   email: string;
   payroll_currency: string;
+  settlement_iban: string;
   default_payout_account_id: number;
   default_funding_account_id: number;
   department_id: number;
@@ -38,7 +39,8 @@ const employeeFormSchema = z.object({
     .trim()
     .refine((value) => !value || /.+@.+\..+/.test(value), 'Email format is invalid.'),
   payroll_currency: z.enum(PAYROLL_CURRENCIES),
-  default_payout_account_id: z.number().int().positive('Employee settlement account is required.'),
+  settlement_iban: z.string().trim().min(5, 'Employee IBAN is required.').max(64, 'Employee IBAN is too long.'),
+  default_payout_account_id: z.number().int().positive('Settlement ledger account is required.'),
   default_funding_account_id: z.number().int().nonnegative(),
   department_id: z.number().int().nonnegative(),
   base_salary_minor: z.number().int().nonnegative('Base salary cannot be negative.'),
@@ -87,6 +89,7 @@ const initialForm: EmployeeForm = {
   full_name: '',
   email: '',
   payroll_currency: 'USD',
+  settlement_iban: '',
   default_payout_account_id: 0,
   default_funding_account_id: 0,
   department_id: 0,
@@ -96,6 +99,11 @@ const initialForm: EmployeeForm = {
   join_date: '',
   notes: '',
 };
+
+function pickAutoSettlementAccount(accounts: Account[], payrollCurrency: string): Account | null {
+  if (!accounts.length) return null;
+  return accounts.find((account) => account.currency === payrollCurrency) || accounts[0];
+}
 
 export default function EmployeesPage() {
   const { token } = useAuth();
@@ -115,32 +123,42 @@ export default function EmployeesPage() {
     () => accountOptions.filter((account) => account.currency === form.payroll_currency),
     [accountOptions, form.payroll_currency]
   );
+  const autoSettlementAccount = useMemo(
+    () => pickAutoSettlementAccount(settlementAccountOptions, form.payroll_currency),
+    [form.payroll_currency, settlementAccountOptions]
+  );
   const departmentOptions = useMemo(
     () => departments.filter((department) => department.is_active || department.id === form.department_id),
     [departments, form.department_id]
   );
 
   const syncDefaultAccounts = (accountsPayload: Account[]) => {
-    const firstCash = accountsPayload.find((account) => account.account_kind !== 'LOAN_RECEIVABLE_CONTROL');
+    const cashAccounts = accountsPayload.filter(
+      (account) => account.is_active && account.account_kind !== 'LOAN_RECEIVABLE_CONTROL'
+    );
+    const firstCash = cashAccounts[0];
     if (!firstCash) {
       return;
     }
 
     setForm((prev) => ({
       ...prev,
-      default_payout_account_id: prev.default_payout_account_id || firstCash.id,
+      default_payout_account_id:
+        prev.default_payout_account_id || pickAutoSettlementAccount(cashAccounts, prev.payroll_currency)?.id || firstCash.id,
       default_funding_account_id: prev.default_funding_account_id || firstCash.id,
-      payroll_currency: prev.payroll_currency || firstCash.currency || PAYROLL_CURRENCIES[0],
+      payroll_currency: prev.payroll_currency || firstCash.currency || 'USD',
     }));
   };
 
   const resetForm = (accountsPayload: Account[] = accountOptions) => {
     const firstCash = accountsPayload.find((account) => account.account_kind !== 'LOAN_RECEIVABLE_CONTROL');
+    const defaultCurrency = firstCash?.currency || 'USD';
+    const settlement = pickAutoSettlementAccount(accountsPayload, defaultCurrency);
     setForm({
       ...initialForm,
-      default_payout_account_id: firstCash?.id || 0,
+      default_payout_account_id: settlement?.id || 0,
       default_funding_account_id: firstCash?.id || 0,
-      payroll_currency: firstCash?.currency || 'USD',
+      payroll_currency: defaultCurrency,
     });
   };
 
@@ -165,6 +183,18 @@ export default function EmployeesPage() {
     });
   }, [token]);
 
+  useEffect(() => {
+    const selectedExists = settlementAccountOptions.some((account) => account.id === form.default_payout_account_id);
+    if (selectedExists) {
+      return;
+    }
+    const autoSelected = settlementAccountOptions[0]?.id || 0;
+    if (autoSelected === form.default_payout_account_id) {
+      return;
+    }
+    setForm((prev) => ({ ...prev, default_payout_account_id: autoSelected }));
+  }, [form.default_payout_account_id, settlementAccountOptions]);
+
   const openCreateModal = () => {
     resetForm(accountOptions);
     setIsCreateModalOpen(true);
@@ -184,6 +214,7 @@ export default function EmployeesPage() {
       full_name: form.full_name || '',
       email: form.email || '',
       payroll_currency: form.payroll_currency,
+      settlement_iban: form.settlement_iban || '',
       default_payout_account_id: Number(form.default_payout_account_id),
       default_funding_account_id: Number(form.default_funding_account_id || 0),
       department_id: Number(form.department_id || 0),
@@ -206,7 +237,7 @@ export default function EmployeesPage() {
     }
 
     if (!parsed.data.default_payout_account_id) {
-      setError('Select a settlement account for this employee.');
+      setError('Select a settlement ledger account for this employee.');
       return;
     }
 
@@ -304,7 +335,8 @@ export default function EmployeesPage() {
                 value={form.payroll_currency}
                 onChange={(event) => {
                   const payrollCurrency = event.target.value;
-                  const firstMatch = accountOptions.find((account) => account.currency === payrollCurrency);
+                  const firstMatch = settlementAccountOptions.find((account) => account.currency === payrollCurrency)
+                    || accountOptions.find((account) => account.currency === payrollCurrency);
                   setForm((prev) => ({
                     ...prev,
                     payroll_currency: payrollCurrency,
@@ -318,6 +350,26 @@ export default function EmployeesPage() {
                   </option>
                 ))}
               </select>
+            </FormField>
+
+            <FormField label="Employee IBAN">
+              <input
+                value={form.settlement_iban}
+                onChange={(event) => setForm((prev) => ({ ...prev, settlement_iban: event.target.value.toUpperCase() }))}
+                placeholder="PK36SCBL0000001123456702"
+                required
+              />
+            </FormField>
+
+            <FormField label="Settlement Ledger Account (Auto)">
+              <input
+                value={
+                  autoSettlementAccount
+                    ? `${autoSettlementAccount.name} (${autoSettlementAccount.currency})`
+                    : `No active ${form.payroll_currency} cash account found`
+                }
+                disabled
+              />
             </FormField>
 
             <FormField label="Department">
@@ -336,31 +388,7 @@ export default function EmployeesPage() {
               </select>
             </FormField>
 
-            <FormField label="Employee Settlement Account">
-              <select
-                value={form.default_payout_account_id}
-                onChange={(event) => {
-                  const id = Number(event.target.value);
-                  const account = settlementAccountOptions.find((entry) => entry.id === id);
-                  setForm((prev) => ({
-                    ...prev,
-                    default_payout_account_id: id,
-                    payroll_currency: account?.currency || prev.payroll_currency,
-                  }));
-                }}
-              >
-                <option value={0} disabled>
-                  {settlementAccountOptions.length ? 'Select account' : 'No account for selected currency'}
-                </option>
-                {settlementAccountOptions.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name} ({account.currency})
-                  </option>
-                ))}
-              </select>
-            </FormField>
-
-            <FormField label="Funding Account (Default)">
+            <FormField label="Funding Account (Default, Optional)">
               <select
                 value={form.default_funding_account_id}
                 onChange={(event) =>
@@ -442,7 +470,8 @@ export default function EmployeesPage() {
               <th>Employee</th>
               <th>Status</th>
               <th>Department</th>
-              <th>Settlement Account</th>
+              <th>Employee IBAN</th>
+              <th>Settlement Ledger</th>
               <th>Funding Default</th>
               <th>Base Salary</th>
               <th>Active Loan</th>
@@ -459,6 +488,7 @@ export default function EmployeesPage() {
                 </td>
                 <td>{employee.status}</td>
                 <td>{employee.department_name || 'Unassigned'}</td>
+                <td>{employee.settlement_iban || '-'}</td>
                 <td>{employee.payout_account_name || '-'}</td>
                 <td>{employee.funding_account_name || '-'}</td>
                 <td>{formatMinor(employee.base_salary_minor, employee.payroll_currency)}</td>

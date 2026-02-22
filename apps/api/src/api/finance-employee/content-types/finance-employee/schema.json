@@ -24,6 +24,7 @@
       "default": "ACTIVE"
     },
     "payroll_currency": { "type": "string", "required": true },
+    "settlement_iban": { "type": "string" },
     "default_payout_account_id": { "type": "biginteger", "required": true },
     "default_funding_account_id": { "type": "biginteger" },
     "department_id": { "type": "biginteger" },

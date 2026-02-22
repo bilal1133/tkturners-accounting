@@ -113,6 +113,7 @@ const EmployeeInputSchema = z.object({
   join_date: dateSchema.nullable().optional(),
   status: EmployeeStatusEnum.default('ACTIVE'),
   payroll_currency: currencyCodeSchema,
+  settlement_iban: z.string().trim().min(5).max(64),
   default_payout_account_id: z.number().int().positive(),
   default_funding_account_id: z.number().int().positive().nullable().optional(),
   department_id: z.number().int().positive().nullable().optional(),

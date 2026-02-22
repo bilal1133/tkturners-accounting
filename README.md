@@ -48,16 +48,23 @@ Private internal finance operations app for founders.
 2. Install dependencies:
 - `yarn install`
 
-3. Run Postgres (local or docker):
+3. One-command local run:
+- `./scripts/run-local.sh up`
+
+4. Manual local run (optional):
+- `./scripts/run-local.sh status`
+- `./scripts/run-local.sh down`
+
+5. Run Postgres (local or docker):
 - `docker compose -f docker/docker-compose.yml up -d postgres`
 
-4. Start API:
+6. Start API:
 - `yarn dev:api`
 
-5. Start Web:
+7. Start Web:
 - `yarn dev:web`
 
-6. Login with seeded users:
+8. Login with seeded users:
 - `bilal@tkturners.com / ChangeMe123!`
 - `cofounder@tkturners.com / ChangeMe123!`
 

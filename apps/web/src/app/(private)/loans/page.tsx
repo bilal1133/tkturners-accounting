@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
-import { formatMinor, todayDate } from '@/lib/format';
+import { formatMinor, lastFridayOfMonth, todayDate, todayMonth } from '@/lib/format';
 import { validateWithSchema } from '@/lib/validation';
 import type { Account, Employee, EmployeeLoan } from '@/lib/types';
 import { FormActions, FormField } from '@/components/ui/form-field';
@@ -20,7 +20,7 @@ type LoanForm = {
   installment_minor: number;
   disbursement_account_id: number;
   receivable_control_account_id: number | null;
-  first_due_date: string;
+  first_due_month: string;
 };
 
 type RepaymentForm = {
@@ -54,7 +54,7 @@ const initialLoanForm: LoanForm = {
   installment_minor: 0,
   disbursement_account_id: 0,
   receivable_control_account_id: null,
-  first_due_date: todayDate(),
+  first_due_month: todayMonth(),
 };
 
 const initialRepaymentForm: RepaymentForm = {
@@ -65,6 +65,7 @@ const initialRepaymentForm: RepaymentForm = {
 };
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format.');
+const monthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Month must be in YYYY-MM format.');
 
 const createLoanSchema = z.object({
   employee_id: z.number().int().positive('Employee is required.'),
@@ -73,7 +74,7 @@ const createLoanSchema = z.object({
   annual_interest_bps: z.number().int().nonnegative('Interest cannot be negative.'),
   installment_minor: z.number().int().positive('Installment must be greater than 0.'),
   disbursement_account_id: z.number().int().positive('Disbursement account is required.'),
-  first_due_date: dateSchema,
+  first_due_month: monthSchema,
 });
 
 const repaymentSchema = z.object({
@@ -404,7 +405,7 @@ export default function LoansPage() {
       annual_interest_bps: Number(loanForm.annual_interest_bps || 0),
       installment_minor: Number(loanForm.installment_minor || 0),
       disbursement_account_id: Number(loanForm.disbursement_account_id),
-      first_due_date: loanForm.first_due_date || todayDate(),
+      first_due_month: loanForm.first_due_month || todayMonth(),
     });
 
     if (!parsedLoan.success) {
@@ -430,7 +431,7 @@ export default function LoansPage() {
         body: {
           ...loanForm,
           receivable_control_account_id: loanForm.receivable_control_account_id || undefined,
-          first_due_date: loanForm.first_due_date || undefined,
+          first_due_date: lastFridayOfMonth(loanForm.first_due_month || todayMonth()) || undefined,
         },
       });
       createdLoanId = createdLoan.id;
@@ -715,11 +716,11 @@ export default function LoansPage() {
               />
             </FormField>
 
-            <FormField label="First Due Date">
+            <FormField label="First Due Month">
               <input
-                type="date"
-                value={loanForm.first_due_date}
-                onChange={(event) => setLoanForm((prev) => ({ ...prev, first_due_date: event.target.value }))}
+                type="month"
+                value={loanForm.first_due_month}
+                onChange={(event) => setLoanForm((prev) => ({ ...prev, first_due_month: event.target.value }))}
               />
             </FormField>
 
