@@ -307,12 +307,14 @@ export default function PayrollRunDetailPage() {
         payload.from_account_id = fromAccountId;
       }
 
-      if (config.from_amount_minor.trim()) {
-        payload.from_amount_minor = Number(config.from_amount_minor);
+      const fromAmountRaw = Number(config.from_amount_minor);
+      if (Number.isFinite(fromAmountRaw) && fromAmountRaw > 0) {
+        payload.from_amount_minor = Math.round(fromAmountRaw);
       }
 
-      if (config.fx_rate.trim()) {
-        payload.fx_rate = Number(config.fx_rate);
+      const fxRateRaw = Number(config.fx_rate);
+      if (Number.isFinite(fxRateRaw) && fxRateRaw > 0) {
+        payload.fx_rate = fxRateRaw;
       }
 
       const netPaidMinor = Number(entry.net_paid_minor || 0);
@@ -321,17 +323,19 @@ export default function PayrollRunDetailPage() {
         payload.to_currency = entry.currency;
       }
 
-      if (config.transfer_fee_amount_minor.trim() && Number(config.transfer_fee_amount_minor) > 0) {
-        payload.transfer_fee_amount_minor = Number(config.transfer_fee_amount_minor);
+      const transferFeeRaw = Number(config.transfer_fee_amount_minor);
+      if (Number.isFinite(transferFeeRaw) && transferFeeRaw > 0) {
+        payload.transfer_fee_amount_minor = Math.round(transferFeeRaw);
         if (feeAccount) {
           payload.transfer_fee_currency = feeAccount.currency;
         }
       }
 
-      if (config.extra_fee_amount_minor.trim() && Number(config.extra_fee_amount_minor) > 0) {
+      const extraFeeRaw = Number(config.extra_fee_amount_minor);
+      if (Number.isFinite(extraFeeRaw) && extraFeeRaw > 0) {
         payload.additional_fees = [
           {
-            amount_minor: Number(config.extra_fee_amount_minor),
+            amount_minor: Math.round(extraFeeRaw),
             currency: feeAccount?.currency,
             description:
               config.extra_fee_description.trim()
