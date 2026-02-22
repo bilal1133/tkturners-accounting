@@ -280,7 +280,27 @@ export default function PayrollRunDetailPage() {
       return;
     }
 
+    const toPositiveInt = (value: unknown) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return null;
+      const normalized = Math.round(parsed);
+      return normalized > 0 ? normalized : null;
+    };
+
+    const toPositiveNumber = (value: unknown) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return null;
+      }
+      return parsed;
+    };
+
     const entryPayments = payableEntries.map((entry) => {
+      const entryId = toPositiveInt(entry.id);
+      if (!entryId) {
+        return null;
+      }
+
       const config = paymentConfig[entry.id] || {
         from_account_id: 0,
         to_account_id: Number(entry.default_payout_account_id || 0),
@@ -291,51 +311,53 @@ export default function PayrollRunDetailPage() {
         extra_fee_description: '',
       };
 
-      const fromAccountId = Number(config.from_account_id || defaultFromAccountId || 0);
-      const toAccountId = Number(config.to_account_id || entry.default_payout_account_id || 0);
-      const feeAccount = accountById.get(fromAccountId) || accountById.get(toAccountId);
+      const fromAccountId = toPositiveInt(config.from_account_id || defaultFromAccountId || 0);
+      const toAccountId = toPositiveInt(config.to_account_id || entry.default_payout_account_id || 0);
+      const feeAccount =
+        (fromAccountId ? accountById.get(fromAccountId) : undefined)
+        || (toAccountId ? accountById.get(toAccountId) : undefined);
 
       const payload: Record<string, unknown> = {
-        entry_id: entry.id,
+        entry_id: entryId,
       };
 
-      if (toAccountId > 0) {
+      if (toAccountId) {
         payload.to_account_id = toAccountId;
       }
 
-      if (fromAccountId > 0) {
+      if (fromAccountId) {
         payload.from_account_id = fromAccountId;
       }
 
-      const fromAmountRaw = Number(config.from_amount_minor);
-      if (Number.isFinite(fromAmountRaw) && fromAmountRaw > 0) {
-        payload.from_amount_minor = Math.round(fromAmountRaw);
+      const fromAmount = toPositiveInt(config.from_amount_minor);
+      if (fromAmount) {
+        payload.from_amount_minor = fromAmount;
       }
 
-      const fxRateRaw = Number(config.fx_rate);
-      if (Number.isFinite(fxRateRaw) && fxRateRaw > 0) {
-        payload.fx_rate = fxRateRaw;
+      const fxRate = toPositiveNumber(config.fx_rate);
+      if (fxRate) {
+        payload.fx_rate = fxRate;
       }
 
-      const netPaidMinor = Number(entry.net_paid_minor || 0);
-      if (netPaidMinor > 0) {
+      const netPaidMinor = toPositiveInt(entry.net_paid_minor || 0);
+      if (netPaidMinor) {
         payload.to_amount_minor = netPaidMinor;
         payload.to_currency = entry.currency;
       }
 
-      const transferFeeRaw = Number(config.transfer_fee_amount_minor);
-      if (Number.isFinite(transferFeeRaw) && transferFeeRaw > 0) {
-        payload.transfer_fee_amount_minor = Math.round(transferFeeRaw);
+      const transferFeeMinor = toPositiveInt(config.transfer_fee_amount_minor);
+      if (transferFeeMinor) {
+        payload.transfer_fee_amount_minor = transferFeeMinor;
         if (feeAccount) {
           payload.transfer_fee_currency = feeAccount.currency;
         }
       }
 
-      const extraFeeRaw = Number(config.extra_fee_amount_minor);
-      if (Number.isFinite(extraFeeRaw) && extraFeeRaw > 0) {
+      const extraFeeMinor = toPositiveInt(config.extra_fee_amount_minor);
+      if (extraFeeMinor) {
         payload.additional_fees = [
           {
-            amount_minor: Math.round(extraFeeRaw),
+            amount_minor: extraFeeMinor,
             currency: feeAccount?.currency,
             description:
               config.extra_fee_description.trim()
@@ -345,7 +367,7 @@ export default function PayrollRunDetailPage() {
       }
 
       return payload;
-    });
+    }).filter((row): row is Record<string, unknown> => Boolean(row));
 
     try {
       setPaying(true);
@@ -354,7 +376,7 @@ export default function PayrollRunDetailPage() {
         method: 'POST',
         body: {
           default_from_account_id: defaultFromAccountId > 0 ? defaultFromAccountId : undefined,
-          entry_payments: entryPayments,
+          entry_payments: entryPayments.length > 0 ? entryPayments : undefined,
         },
       });
       await load();

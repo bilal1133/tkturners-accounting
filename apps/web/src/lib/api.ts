@@ -27,7 +27,38 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const payload = contentType.includes('application/json') ? await response.json() : await response.text();
 
   if (!response.ok) {
-    const message = typeof payload === 'string' ? payload : payload?.error || 'Request failed';
+    const formatDetails = (details: unknown): string | null => {
+      if (!details || typeof details !== 'object') {
+        return null;
+      }
+
+      const detailObject = details as {
+        fieldErrors?: Record<string, string[]>;
+        formErrors?: string[];
+      };
+
+      const fieldEntry = Object.entries(detailObject.fieldErrors || {}).find(
+        ([, values]) => Array.isArray(values) && values.length > 0
+      );
+      if (fieldEntry) {
+        return `${fieldEntry[0]}: ${fieldEntry[1][0]}`;
+      }
+
+      const formError = Array.isArray(detailObject.formErrors) ? detailObject.formErrors[0] : null;
+      if (formError) {
+        return formError;
+      }
+
+      return null;
+    };
+
+    let message = typeof payload === 'string' ? payload : payload?.error || 'Request failed';
+    if (typeof payload !== 'string') {
+      const detailsMessage = formatDetails(payload?.details);
+      if (detailsMessage) {
+        message = `${message} (${detailsMessage})`;
+      }
+    }
     throw new Error(message);
   }
 
