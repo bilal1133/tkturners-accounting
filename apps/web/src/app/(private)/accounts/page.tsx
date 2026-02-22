@@ -109,6 +109,27 @@ export default function AccountsPage() {
     }
   };
 
+  const reactivateAccount = async (accountId: number) => {
+    if (!token) return;
+
+    try {
+      setBusyAccountId(accountId);
+      await apiRequest(`/finance/accounts/${accountId}`, {
+        token,
+        method: 'PATCH',
+        body: {
+          is_active: true,
+        },
+      });
+      await loadAccounts();
+      setError(null);
+    } catch (reactivateError) {
+      setError(reactivateError instanceof Error ? reactivateError.message : 'Failed to reactivate account');
+    } finally {
+      setBusyAccountId(null);
+    }
+  };
+
   return (
     <section className="page">
       <header className="page-head">
@@ -205,17 +226,33 @@ export default function AccountsPage() {
                 <td>{formatMinor(account.current_balance_minor, account.currency)}</td>
                 <td>{account.is_active ? 'Active' : 'Inactive'}</td>
                 <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button className="ghost-button" type="button" onClick={() => startEdit(account)}>
-                    Edit
-                  </button>
                   <button
                     className="ghost-button"
                     type="button"
-                    onClick={() => deleteAccount(Number(account.id))}
+                    onClick={() => startEdit(account)}
                     disabled={busyAccountId === Number(account.id)}
                   >
-                    {busyAccountId === Number(account.id) ? 'Deleting...' : 'Delete'}
+                    Edit
                   </button>
+                  {account.is_active ? (
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => deleteAccount(Number(account.id))}
+                      disabled={busyAccountId === Number(account.id)}
+                    >
+                      {busyAccountId === Number(account.id) ? 'Deleting...' : 'Delete'}
+                    </button>
+                  ) : (
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => reactivateAccount(Number(account.id))}
+                      disabled={busyAccountId === Number(account.id)}
+                    >
+                      {busyAccountId === Number(account.id) ? 'Reactivating...' : 'Reactivate'}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
