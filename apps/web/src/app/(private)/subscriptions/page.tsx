@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
@@ -9,7 +9,8 @@ import type { Account, Category, Counterparty, Subscription } from '@/lib/types'
 
 type FormState = {
   vendor_counterparty_id: number;
-  amount_minor: number;
+  vendor_name: string;
+  amount_major: string;
   currency: string;
   account_id: number;
   category_id: number;
@@ -18,6 +19,30 @@ type FormState = {
   next_run_date: string;
   description: string;
 };
+
+function minorToMajorInput(amountMinor: number | null | undefined): string {
+  const numeric = Number(amountMinor || 0);
+  if (!Number.isFinite(numeric) || numeric === 0) {
+    return '';
+  }
+
+  const major = numeric / 100;
+  return Number.isInteger(major) ? String(major) : major.toFixed(2);
+}
+
+function majorInputToMinor(rawValue: string): number {
+  const normalized = String(rawValue || '').replace(/,/g, '').trim();
+  if (!normalized) {
+    return 0;
+  }
+
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  return Math.round(numeric * 100);
+}
 
 export default function SubscriptionsPage() {
   const { token } = useAuth();
@@ -31,7 +56,8 @@ export default function SubscriptionsPage() {
 
   const [form, setForm] = useState<FormState>({
     vendor_counterparty_id: 0,
-    amount_minor: 0,
+    vendor_name: '',
+    amount_major: '',
     currency: 'USD',
     account_id: 0,
     category_id: 0,
@@ -40,6 +66,19 @@ export default function SubscriptionsPage() {
     next_run_date: todayDate(),
     description: '',
   });
+
+  const vendorCounterparties = useMemo(
+    () => counterparties.filter((entry) => entry.kind !== 'EMPLOYEE'),
+    [counterparties]
+  );
+
+  const vendorByNameMap = useMemo(() => {
+    const map = new Map<string, Counterparty>();
+    for (const entry of vendorCounterparties) {
+      map.set(entry.name.trim().toLowerCase(), entry);
+    }
+    return map;
+  }, [vendorCounterparties]);
 
   const loadData = async () => {
     if (!token) return;
@@ -50,6 +89,8 @@ export default function SubscriptionsPage() {
       apiRequest<Category[]>('/finance/categories', { token }),
       apiRequest<Counterparty[]>('/finance/counterparties', { token }),
     ]);
+
+    const vendorOptions = counterpartyPayload.filter((entry) => entry.kind !== 'EMPLOYEE');
 
     setSubscriptions(subscriptionPayload);
     setAccounts(accountPayload);
@@ -64,7 +105,8 @@ export default function SubscriptionsPage() {
         categoryPayload.find((category) => category.name === 'Subscriptions')?.id ||
         categoryPayload[0]?.id ||
         0,
-      vendor_counterparty_id: prev.vendor_counterparty_id || counterpartyPayload[0]?.id || 0,
+      vendor_counterparty_id: prev.vendor_counterparty_id || vendorOptions[0]?.id || 0,
+      vendor_name: prev.vendor_name || vendorOptions[0]?.name || '',
       currency: accountPayload[0]?.currency || 'USD',
     }));
   };
@@ -75,32 +117,81 @@ export default function SubscriptionsPage() {
     });
   }, [token]);
 
+  const resolveVendorCounterpartyId = async () => {
+    const vendorName = form.vendor_name.trim();
+    if (!vendorName) {
+      throw new Error('Vendor is required.');
+    }
+
+    const exactMatch = vendorByNameMap.get(vendorName.toLowerCase());
+    if (exactMatch) {
+      return exactMatch.id;
+    }
+
+    if (!token) {
+      throw new Error('Authentication required.');
+    }
+
+    const createdCounterparty = await apiRequest<Counterparty>('/finance/counterparties', {
+      token,
+      method: 'POST',
+      body: {
+        name: vendorName,
+        kind: 'VENDOR',
+      },
+    });
+
+    setCounterparties((previous) =>
+      [...previous, createdCounterparty].sort((left, right) => left.name.localeCompare(right.name))
+    );
+
+    return Number(createdCounterparty.id);
+  };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token) return;
 
     try {
+      const amountMinor = majorInputToMinor(form.amount_major);
+      if (amountMinor <= 0) {
+        setError('Amount must be greater than 0.');
+        return;
+      }
+
+      const selectedAccount = accounts.find((account) => Number(account.id) === Number(form.account_id));
+      const payload = {
+        vendor_counterparty_id: await resolveVendorCounterpartyId(),
+        amount_minor: amountMinor,
+        currency: selectedAccount?.currency || form.currency,
+        account_id: Number(form.account_id),
+        category_id: Number(form.category_id),
+        frequency: form.frequency,
+        interval_count: Number(form.interval_count || 1),
+        next_run_date: form.next_run_date,
+        description: form.description || null,
+      };
+
       if (editingSubscriptionId) {
         await apiRequest(`/finance/subscriptions/${editingSubscriptionId}`, {
           token,
           method: 'PATCH',
-          body: {
-            ...form,
-            description: form.description || null,
-          },
+          body: payload,
         });
       } else {
         await apiRequest('/finance/subscriptions', {
           token,
           method: 'POST',
-          body: {
-            ...form,
-            description: form.description || null,
-          },
+          body: payload,
         });
       }
       setEditingSubscriptionId(null);
       await loadData();
+      setForm((prev) => ({
+        ...prev,
+        amount_major: '',
+        description: '',
+      }));
       setError(null);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Failed to save subscription');
@@ -109,9 +200,12 @@ export default function SubscriptionsPage() {
 
   const startEdit = (subscription: Subscription) => {
     setEditingSubscriptionId(Number(subscription.id));
+    const vendor =
+      counterparties.find((entry) => Number(entry.id) === Number(subscription.vendor_counterparty_id)) || null;
     setForm({
       vendor_counterparty_id: Number(subscription.vendor_counterparty_id || 0),
-      amount_minor: Number(subscription.amount_minor || 0),
+      vendor_name: vendor?.name || subscription.vendor_name || '',
+      amount_major: minorToMajorInput(Number(subscription.amount_minor || 0)),
       currency: subscription.currency,
       account_id: Number(subscription.account_id || 0),
       category_id: Number(subscription.category_id || 0),
@@ -161,34 +255,57 @@ export default function SubscriptionsPage() {
         <div className="form-grid">
           <label>
             Vendor
-            <select
-              value={form.vendor_counterparty_id}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, vendor_counterparty_id: Number(event.target.value) }))
-              }
-            >
-              {counterparties.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.name}
-                </option>
+            <input
+              list="subscription-vendors"
+              placeholder="Type vendor (e.g., ChatGPT, Figma)"
+              value={form.vendor_name}
+              onChange={(event) => {
+                const value = event.target.value;
+                const match = vendorByNameMap.get(value.trim().toLowerCase());
+                setForm((prev) => ({
+                  ...prev,
+                  vendor_name: value,
+                  vendor_counterparty_id: match ? Number(match.id) : 0,
+                }));
+              }}
+              required
+            />
+            <datalist id="subscription-vendors">
+              {vendorCounterparties.map((entry) => (
+                <option key={entry.id} value={entry.name} />
               ))}
-            </select>
+            </datalist>
+            <small style={{ color: 'var(--muted)' }}>
+              Select an existing vendor or type a new one. New names are saved automatically.
+            </small>
           </label>
           <label>
-            Amount (minor)
+            Amount ({accounts.find((entry) => Number(entry.id) === Number(form.account_id))?.currency || form.currency})
             <input
               type="number"
-              value={form.amount_minor}
+              min={0}
+              step="0.01"
+              value={form.amount_major}
               onChange={(event) =>
-                setForm((prev) => ({ ...prev, amount_minor: Number(event.target.value || 0) }))
+                setForm((prev) => ({ ...prev, amount_major: event.target.value }))
               }
+              placeholder="0.00"
+              required
             />
           </label>
           <label>
             Account
             <select
               value={form.account_id}
-              onChange={(event) => setForm((prev) => ({ ...prev, account_id: Number(event.target.value) }))}
+              onChange={(event) => {
+                const accountId = Number(event.target.value);
+                const selectedAccount = accounts.find((entry) => Number(entry.id) === accountId);
+                setForm((prev) => ({
+                  ...prev,
+                  account_id: accountId,
+                  currency: selectedAccount?.currency || prev.currency,
+                }));
+              }}
             >
               {accounts.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -261,7 +378,7 @@ export default function SubscriptionsPage() {
                 setEditingSubscriptionId(null);
                 setForm((prev) => ({
                   ...prev,
-                  amount_minor: 0,
+                  amount_major: '',
                   interval_count: 1,
                   description: '',
                 }));
