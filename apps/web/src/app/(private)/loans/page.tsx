@@ -177,6 +177,7 @@ export default function LoansPage() {
     initialLoanDisbursementForm
   );
   const [repaymentForm, setRepaymentForm] = useState<RepaymentForm>(initialRepaymentForm);
+  const [repaymentAmountTouched, setRepaymentAmountTouched] = useState(false);
   const [loanDisbursements, setLoanDisbursements] = useState<Record<number, LoanDisbursementForm>>({});
   const [error, setError] = useState<string | null>(null);
 
@@ -240,6 +241,68 @@ export default function LoansPage() {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load loans');
     });
   }, [token]);
+
+  const selectedRepaymentLoan = loans.find((loan) => loan.id === Number(repaymentForm.loan_id));
+  const selectedRepaymentAccount = cashAccounts.find((account) => account.id === Number(repaymentForm.cash_account_id));
+  const repaymentOutstandingMinor = selectedRepaymentLoan
+    ? Number(selectedRepaymentLoan.outstanding_principal_minor || 0) + Number(selectedRepaymentLoan.outstanding_interest_minor || 0)
+    : 0;
+  const repaymentSuggestedMinor = selectedRepaymentLoan
+    ? Math.min(
+        repaymentOutstandingMinor,
+        Number(selectedRepaymentLoan.installment_minor || repaymentOutstandingMinor || 0)
+      )
+    : 0;
+  const repaymentAmountMinor = Number(repaymentForm.amount_minor || 0);
+  const repaymentRemainingMinor = Math.max(repaymentOutstandingMinor - repaymentAmountMinor, 0);
+  const repaymentAccountCurrencyMismatch =
+    Boolean(selectedRepaymentLoan) &&
+    Boolean(selectedRepaymentAccount) &&
+    selectedRepaymentAccount?.currency !== selectedRepaymentLoan?.currency;
+
+  useEffect(() => {
+    if (!selectedRepaymentLoan) {
+      return;
+    }
+
+    const preferredCashAccount =
+      cashAccounts.find((account) => account.currency === selectedRepaymentLoan.currency)
+      || cashAccounts.find((account) => account.account_kind !== 'LOAN_RECEIVABLE_CONTROL')
+      || null;
+
+    setRepaymentForm((previous) => {
+      let changed = false;
+      const next: RepaymentForm = { ...previous };
+
+      if (preferredCashAccount && Number(previous.cash_account_id) !== Number(preferredCashAccount.id)) {
+        next.cash_account_id = Number(preferredCashAccount.id);
+        changed = true;
+      }
+
+      if (!repaymentAmountTouched) {
+        const suggestedAmount = Math.max(0, Number(repaymentSuggestedMinor || 0));
+        if (Number(previous.amount_minor) !== suggestedAmount) {
+          next.amount_minor = suggestedAmount;
+          changed = true;
+        }
+      } else {
+        const clampedAmount = Math.max(0, Math.min(Number(previous.amount_minor || 0), repaymentOutstandingMinor));
+        if (Number(previous.amount_minor) !== clampedAmount) {
+          next.amount_minor = clampedAmount;
+          changed = true;
+        }
+      }
+
+      return changed ? next : previous;
+    });
+  }, [
+    selectedRepaymentLoan?.id,
+    selectedRepaymentLoan?.currency,
+    repaymentSuggestedMinor,
+    repaymentOutstandingMinor,
+    repaymentAmountTouched,
+    cashAccounts,
+  ]);
 
   const submitLoan = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -372,7 +435,7 @@ export default function LoansPage() {
           cash_account_id: repaymentForm.cash_account_id,
         },
       });
-      setRepaymentForm((prev) => ({ ...prev, amount_minor: 0 }));
+      setRepaymentAmountTouched(false);
       await load();
       setError(null);
     } catch (repayError) {
@@ -679,18 +742,74 @@ export default function LoansPage() {
           </label>
           <label>
             Amount (minor)
-            <input
-              type="number"
-              min={1}
-              value={repaymentForm.amount_minor}
-              onChange={(event) =>
-                setRepaymentForm((prev) => ({ ...prev, amount_minor: Number(event.target.value || 0) }))
-              }
-              required
-            />
-          </label>
-        </div>
-        <button className="primary-button" type="submit" disabled={!repaymentForm.loan_id}>
+              <input
+                type="number"
+                min={1}
+                value={repaymentForm.amount_minor}
+                onChange={(event) =>
+                {
+                  const enteredAmount = Number(event.target.value || 0);
+                  const cappedAmount = selectedRepaymentLoan
+                    ? Math.max(0, Math.min(enteredAmount, repaymentOutstandingMinor))
+                    : Math.max(0, enteredAmount);
+                  setRepaymentAmountTouched(true);
+                  setRepaymentForm((prev) => ({ ...prev, amount_minor: cappedAmount }));
+                }
+                }
+                required
+              />
+            </label>
+          </div>
+        {selectedRepaymentLoan ? (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <small style={{ color: 'var(--muted)' }}>
+              Outstanding: {formatMinor(repaymentOutstandingMinor, selectedRepaymentLoan.currency)} | Suggested now:{' '}
+              {formatMinor(repaymentSuggestedMinor, selectedRepaymentLoan.currency)} | Remaining after this payment:{' '}
+              {formatMinor(repaymentRemainingMinor, selectedRepaymentLoan.currency)}
+            </small>
+            {repaymentAccountCurrencyMismatch ? (
+              <small className="error-text">
+                Selected cash account currency ({selectedRepaymentAccount?.currency}) must match loan currency (
+                {selectedRepaymentLoan.currency}).
+              </small>
+            ) : null}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setRepaymentAmountTouched(false);
+                  setRepaymentForm((prev) => ({ ...prev, amount_minor: repaymentSuggestedMinor }));
+                }}
+              >
+                Use Suggested Amount
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => {
+                  setRepaymentAmountTouched(true);
+                  setRepaymentForm((prev) => ({ ...prev, amount_minor: repaymentOutstandingMinor }));
+                }}
+              >
+                Pay Full Outstanding
+              </button>
+            </div>
+          </div>
+        ) : (
+          <small style={{ color: 'var(--muted)' }}>
+            Select an active loan to auto-fill repayment amount and show remaining balance.
+          </small>
+        )}
+        <button
+          className="primary-button"
+          type="submit"
+          disabled={
+            !repaymentForm.loan_id
+            || Number(repaymentForm.amount_minor || 0) <= 0
+            || repaymentAccountCurrencyMismatch
+          }
+        >
           Post Repayment
         </button>
       </form>
