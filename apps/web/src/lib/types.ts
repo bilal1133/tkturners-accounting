@@ -24,6 +24,15 @@ export type Account = {
   is_system?: boolean;
 };
 
+export type AccountBalanceSnapshot = {
+  id: number;
+  name: string;
+  currency: string;
+  opening_balance_minor: number;
+  ledger_delta_minor: number;
+  current_balance_minor: number;
+};
+
 export type Category = {
   id: number;
   name: string;

@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { StatCard } from '@/components/stat-card';
+import { TotalBalanceCard } from '@/components/dashboard/total-balance-card';
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
-import { todayMonth } from '@/lib/format';
+import { todayDate, todayMonth } from '@/lib/format';
 import { PageHeader } from '@/components/ui/page-header';
+import type { AccountBalanceSnapshot } from '@/lib/types';
 
 type SummaryResponse = {
   month: string;
@@ -27,9 +29,11 @@ export default function DashboardPage() {
   const { token, me } = useAuth();
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [pending, setPending] = useState<number>(0);
+  const [balances, setBalances] = useState<AccountBalanceSnapshot[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const month = useMemo(() => todayMonth(), []);
+  const asOf = useMemo(() => todayDate(), []);
 
   useEffect(() => {
     if (!token) return;
@@ -37,16 +41,18 @@ export default function DashboardPage() {
     Promise.all([
       apiRequest<SummaryResponse>(`/finance/reports/monthly-summary?month=${month}&mode=base`, { token }),
       apiRequest<Array<unknown>>('/finance/transactions?status=PENDING&source=SLACK', { token }),
+      apiRequest<AccountBalanceSnapshot[]>(`/finance/reports/account-balances?as_of=${asOf}`, { token }),
     ])
-      .then(([summaryPayload, pendingPayload]) => {
+      .then(([summaryPayload, pendingPayload, accountBalancesPayload]) => {
         setSummary(summaryPayload);
         setPending(pendingPayload.length);
+        setBalances(accountBalancesPayload);
         setError(null);
       })
       .catch((loadError) => {
         setError(loadError instanceof Error ? loadError.message : 'Failed to load dashboard');
       });
-  }, [token, month]);
+  }, [token, month, asOf]);
 
   const currency = me?.workspace.base_currency || 'USD';
 
@@ -59,6 +65,8 @@ export default function DashboardPage() {
       />
 
       {error ? <p className="error-text">{error}</p> : null}
+
+      <TotalBalanceCard balances={balances} workspaceBaseCurrency={currency} />
 
       {summary ? (
         <div className="grid-cards">
