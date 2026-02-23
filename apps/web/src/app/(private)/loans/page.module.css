@@ -1,0 +1,47 @@
+.disbursementPanel {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.disbursementToggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text);
+}
+
+.disbursementToggle input {
+  width: auto;
+}
+
+.mutedNote {
+  margin: 0;
+  color: var(--muted);
+}
+
+.repaymentMeta {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.setupStack {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.hintBlock {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}

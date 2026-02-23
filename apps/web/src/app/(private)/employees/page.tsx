@@ -335,8 +335,7 @@ export default function EmployeesPage() {
                 value={form.payroll_currency}
                 onChange={(event) => {
                   const payrollCurrency = event.target.value;
-                  const firstMatch = settlementAccountOptions.find((account) => account.currency === payrollCurrency)
-                    || accountOptions.find((account) => account.currency === payrollCurrency);
+                  const firstMatch = accountOptions.find((account) => account.currency === payrollCurrency) || null;
                   setForm((prev) => ({
                     ...prev,
                     payroll_currency: payrollCurrency,

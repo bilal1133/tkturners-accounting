@@ -62,10 +62,12 @@ const {
   getLoan,
   createLoan,
   updateLoan,
+  deleteLoan,
   disburseLoan,
   repayLoan,
   payrollSummaryReport,
   payrollByDepartmentReport,
+  payrollDepartmentTrendReport,
   loanOutstandingReport,
   employeeLedgerReport,
 } = require('../../../lib/finance/payroll');
@@ -80,6 +82,10 @@ const {
   PAYROLL_COLUMNS,
   LOAN_LEDGER_COLUMNS,
 } = require('../../../lib/finance/exports');
+const {
+  getIdempotencyKey,
+  executeIdempotentFinanceAction,
+} = require('../../../lib/finance/idempotency');
 
 module.exports = {
   async health(ctx) {
@@ -552,8 +558,24 @@ module.exports = {
       const { user, membership } = await requireMembership(ctx);
       requireRole(membership, 'ACCOUNTANT');
       const workspace = await getWorkspaceSettings(membership.workspace_id);
-
-      ctx.body = await generateSubscriptionRun(workspace, user.id, Number(ctx.params.id));
+      const subscriptionId = Number(ctx.params.id);
+      const key = getIdempotencyKey(ctx);
+      const result = await executeIdempotentFinanceAction({
+        workspaceId: membership.workspace_id,
+        actorUserId: user.id,
+        scope: `SUBSCRIPTION_GENERATE:${subscriptionId}`,
+        idempotencyKey: key,
+        payload: ctx.request.body || {},
+        execute: async () => ({
+          status: 200,
+          body: await generateSubscriptionRun(workspace, user.id, subscriptionId),
+        }),
+      });
+      if (result.replayed) {
+        ctx.set('X-Idempotent-Replayed', 'true');
+      }
+      ctx.status = result.status;
+      ctx.body = result.body;
     } catch (error) {
       handleControllerError(ctx, error);
     }
@@ -605,7 +627,24 @@ module.exports = {
       const { user, membership } = await requireMembership(ctx);
       requireRole(membership, 'ACCOUNTANT');
       const workspace = await getWorkspaceSettings(membership.workspace_id);
-      ctx.body = await generatePayrollRunEntries(workspace, user.id, Number(ctx.params.id));
+      const payrollRunId = Number(ctx.params.id);
+      const key = getIdempotencyKey(ctx);
+      const result = await executeIdempotentFinanceAction({
+        workspaceId: membership.workspace_id,
+        actorUserId: user.id,
+        scope: `PAYROLL_RUN_GENERATE:${payrollRunId}`,
+        idempotencyKey: key,
+        payload: ctx.request.body || {},
+        execute: async () => ({
+          status: 200,
+          body: await generatePayrollRunEntries(workspace, user.id, payrollRunId),
+        }),
+      });
+      if (result.replayed) {
+        ctx.set('X-Idempotent-Replayed', 'true');
+      }
+      ctx.status = result.status;
+      ctx.body = result.body;
     } catch (error) {
       handleControllerError(ctx, error);
     }
@@ -642,7 +681,25 @@ module.exports = {
       const { user, membership } = await requireMembership(ctx);
       requireRole(membership, 'ACCOUNTANT');
       const workspace = await getWorkspaceSettings(membership.workspace_id);
-      ctx.body = await payPayrollRun(workspace, user.id, Number(ctx.params.id), ctx.request.body || {});
+      const payrollRunId = Number(ctx.params.id);
+      const payload = ctx.request.body || {};
+      const key = getIdempotencyKey(ctx);
+      const result = await executeIdempotentFinanceAction({
+        workspaceId: membership.workspace_id,
+        actorUserId: user.id,
+        scope: `PAYROLL_RUN_PAY:${payrollRunId}`,
+        idempotencyKey: key,
+        payload,
+        execute: async () => ({
+          status: 200,
+          body: await payPayrollRun(workspace, user.id, payrollRunId, payload),
+        }),
+      });
+      if (result.replayed) {
+        ctx.set('X-Idempotent-Replayed', 'true');
+      }
+      ctx.status = result.status;
+      ctx.body = result.body;
     } catch (error) {
       handleControllerError(ctx, error);
     }
@@ -695,12 +752,40 @@ module.exports = {
     }
   },
 
+  async deleteLoan(ctx) {
+    try {
+      const { user, membership } = await requireMembership(ctx);
+      requireRole(membership, 'ACCOUNTANT');
+      ctx.body = await deleteLoan(membership.workspace_id, user.id, Number(ctx.params.id));
+    } catch (error) {
+      handleControllerError(ctx, error);
+    }
+  },
+
   async disburseLoan(ctx) {
     try {
       const { user, membership } = await requireMembership(ctx);
       requireRole(membership, 'ACCOUNTANT');
       const workspace = await getWorkspaceSettings(membership.workspace_id);
-      ctx.body = await disburseLoan(workspace, user.id, Number(ctx.params.id), ctx.request.body || {});
+      const loanId = Number(ctx.params.id);
+      const payload = ctx.request.body || {};
+      const key = getIdempotencyKey(ctx);
+      const result = await executeIdempotentFinanceAction({
+        workspaceId: membership.workspace_id,
+        actorUserId: user.id,
+        scope: `LOAN_DISBURSE:${loanId}`,
+        idempotencyKey: key,
+        payload,
+        execute: async () => ({
+          status: 200,
+          body: await disburseLoan(workspace, user.id, loanId, payload),
+        }),
+      });
+      if (result.replayed) {
+        ctx.set('X-Idempotent-Replayed', 'true');
+      }
+      ctx.status = result.status;
+      ctx.body = result.body;
     } catch (error) {
       handleControllerError(ctx, error);
     }
@@ -711,7 +796,25 @@ module.exports = {
       const { user, membership } = await requireMembership(ctx);
       requireRole(membership, 'ACCOUNTANT');
       const workspace = await getWorkspaceSettings(membership.workspace_id);
-      ctx.body = await repayLoan(workspace, user.id, Number(ctx.params.id), ctx.request.body || {});
+      const loanId = Number(ctx.params.id);
+      const payload = ctx.request.body || {};
+      const key = getIdempotencyKey(ctx);
+      const result = await executeIdempotentFinanceAction({
+        workspaceId: membership.workspace_id,
+        actorUserId: user.id,
+        scope: `LOAN_REPAY:${loanId}`,
+        idempotencyKey: key,
+        payload,
+        execute: async () => ({
+          status: 200,
+          body: await repayLoan(workspace, user.id, loanId, payload),
+        }),
+      });
+      if (result.replayed) {
+        ctx.set('X-Idempotent-Replayed', 'true');
+      }
+      ctx.status = result.status;
+      ctx.body = result.body;
     } catch (error) {
       handleControllerError(ctx, error);
     }
@@ -779,6 +882,19 @@ module.exports = {
       const month = ctx.query.month || new Date().toISOString().slice(0, 7);
       const mode = ctx.query.mode === 'per_currency' ? 'per_currency' : 'base';
       ctx.body = await payrollByDepartmentReport(workspace, month, mode);
+    } catch (error) {
+      handleControllerError(ctx, error);
+    }
+  },
+
+  async payrollDepartmentTrend(ctx) {
+    try {
+      const { membership } = await requireMembership(ctx);
+      const workspace = await getWorkspaceSettings(membership.workspace_id);
+      const to = ctx.query.to || new Date().toISOString().slice(0, 7);
+      const from = ctx.query.from || to;
+      const mode = ctx.query.mode === 'per_currency' ? 'per_currency' : 'base';
+      ctx.body = await payrollDepartmentTrendReport(workspace, from, to, mode);
     } catch (error) {
       handleControllerError(ctx, error);
     }

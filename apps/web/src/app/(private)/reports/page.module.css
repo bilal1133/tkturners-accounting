@@ -1,0 +1,14 @@
+.pieWrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.pieChart {
+  border: 1px solid var(--line);
+  border-radius: 50%;
+}
+
+.progressCell {
+  min-width: 180px;
+}

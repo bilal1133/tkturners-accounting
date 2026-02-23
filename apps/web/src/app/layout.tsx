@@ -3,6 +3,8 @@ import { Fraunces, Space_Grotesk } from 'next/font/google';
 
 import './globals.css';
 import { AuthProvider } from '@/lib/auth';
+import { ThemeProvider } from '@/components/theme/theme-provider';
+import { themeBootstrapScript, themeCssText } from '@/theme/theme-config';
 
 const heading = Fraunces({
   subsets: ['latin'],
@@ -25,9 +27,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head suppressHydrationWarning>
+        <style id="theme-config">{themeCssText}</style>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      </head>
       <body className={`${heading.variable} ${body.variable}`}>
-        <AuthProvider>{children}</AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

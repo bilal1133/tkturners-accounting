@@ -5,6 +5,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { apiDownload, apiRequest } from '@/lib/api';
 import { formatMinor, todayMonth } from '@/lib/format';
+import { PageHeader } from '@/components/ui/page-header';
+import { PieShareChart } from '@/components/ui/pie-share-chart';
+import { ProgressMeter } from '@/components/ui/progress-meter';
+import { chartPalette } from '@/theme/theme-config';
+import styles from './page.module.css';
 
 type MonthlySummary = {
   month: string;
@@ -95,15 +100,44 @@ type PayrollDepartmentSpend = {
   }>;
 };
 
-const PIE_COLORS = [
-  '#0f766e',
-  '#1d4ed8',
-  '#ea580c',
-  '#16a34a',
-  '#be185d',
-  '#b45309',
-  '#475569',
-];
+type PayrollDepartmentTrend = {
+  from: string;
+  to: string;
+  mode: 'base' | 'per_currency';
+  base_currency: string;
+  totals: {
+    excluded_unconverted_count: number;
+  };
+  totals_by_period: Array<{
+    period_month: string;
+    currency: string;
+    total_minor: number;
+  }>;
+  rows: Array<{
+    period_month: string;
+    department_id: number | null;
+    department_name: string;
+    department_code: string | null;
+    currency: string | null;
+    total_minor: number;
+    employees_count: number;
+    excluded_unconverted_count: number;
+    share_pct: number;
+  }>;
+};
+
+function shiftMonth(month: string, delta: number) {
+  const [year, monthIndex] = month.split('-').map((value) => Number(value));
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 1 || monthIndex > 12) {
+    return month;
+  }
+  const shifted = new Date(Date.UTC(year, monthIndex - 1 + delta, 1));
+  const shiftedYear = shifted.getUTCFullYear();
+  const shiftedMonth = shifted.getUTCMonth() + 1;
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, '0')}`;
+}
+
+const PIE_COLORS = chartPalette;
 
 export default function ReportsPage() {
   const { token, me } = useAuth();
@@ -114,18 +148,21 @@ export default function ReportsPage() {
   const [cashflow, setCashflow] = useState<CashflowRow[]>([]);
   const [payrollSummary, setPayrollSummary] = useState<PayrollSummary | null>(null);
   const [departmentSpend, setDepartmentSpend] = useState<PayrollDepartmentSpend | null>(null);
+  const [departmentTrend, setDepartmentTrend] = useState<PayrollDepartmentTrend | null>(null);
   const [loanOutstanding, setLoanOutstanding] = useState<LoanOutstanding | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     if (!token) return;
 
+    const trendFrom = shiftMonth(month, -5);
     const [
       summaryPayload,
       breakdownPayload,
       cashflowPayload,
       payrollSummaryPayload,
       departmentSpendPayload,
+      departmentTrendPayload,
       loanOutstandingPayload,
     ] =
       await Promise.all([
@@ -136,6 +173,12 @@ export default function ReportsPage() {
       apiRequest<PayrollDepartmentSpend>(`/finance/reports/payroll-by-department?month=${month}&mode=${mode}`, {
         token,
       }),
+      apiRequest<PayrollDepartmentTrend>(
+        `/finance/reports/payroll-department-trend?from=${trendFrom}&to=${month}&mode=${mode}`,
+        {
+          token,
+        }
+      ),
       apiRequest<LoanOutstanding>('/finance/reports/loan-outstanding', { token }),
     ]);
 
@@ -144,6 +187,7 @@ export default function ReportsPage() {
     setCashflow(cashflowPayload);
     setPayrollSummary(payrollSummaryPayload);
     setDepartmentSpend(departmentSpendPayload);
+    setDepartmentTrend(departmentTrendPayload);
     setLoanOutstanding(loanOutstandingPayload);
   };
 
@@ -155,49 +199,42 @@ export default function ReportsPage() {
 
   const baseCurrency = me?.workspace.base_currency || 'USD';
   const departmentSpendMode = departmentSpend?.mode || mode;
-  const departmentPie = useMemo(() => {
+  const departmentPieSlices = useMemo(() => {
     if (!departmentSpend || departmentSpend.mode !== 'base' || !departmentSpend.rows.length) {
-      return null;
+      return [];
     }
 
-    let start = 0;
-    const stops = departmentSpend.rows
+    return departmentSpend.rows
       .filter((row) => row.share_pct > 0)
       .map((row, index) => {
-        const end = Math.min(100, start + row.share_pct);
-        const stop = `${PIE_COLORS[index % PIE_COLORS.length]} ${start}% ${end}%`;
-        start = end;
-        return stop;
+        return {
+          value: row.share_pct,
+          color: PIE_COLORS[index % PIE_COLORS.length],
+        };
       });
-
-    if (start < 100) {
-      stops.push(`#e5e7eb ${start}% 100%`);
-    }
-
-    return `conic-gradient(${stops.join(', ')})`;
   }, [departmentSpend]);
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">MONTHLY ANALYTICS</p>
-          <h2>Reports</h2>
-        </div>
-        <button
-          className="ghost-button"
-          onClick={() => {
-            if (!token) return;
-            apiDownload(`/finance/exports/monthly-summary.csv?month=${month}&mode=${mode}`, token).catch(
-              (downloadError) => {
-                setError(downloadError instanceof Error ? downloadError.message : 'Download failed');
-              }
-            );
-          }}
-        >
-          Export Summary CSV
-        </button>
-      </header>
+      <PageHeader
+        badge="MONTHLY ANALYTICS"
+        title="Reports"
+        actions={
+          <button
+            className="ghost-button"
+            onClick={() => {
+              if (!token) return;
+              apiDownload(`/finance/exports/monthly-summary.csv?month=${month}&mode=${mode}`, token).catch(
+                (downloadError) => {
+                  setError(downloadError instanceof Error ? downloadError.message : 'Download failed');
+                }
+              );
+            }}
+          >
+            Export Summary CSV
+          </button>
+        }
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
 
@@ -362,16 +399,12 @@ export default function ReportsPage() {
         ) : (
           <p>Per-currency department spend distribution.</p>
         )}
-        {departmentPie ? (
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.75rem' }}>
-            <div
-              style={{
-                width: 180,
-                height: 180,
-                borderRadius: '50%',
-                background: departmentPie,
-                border: '1px solid rgba(0,0,0,0.08)',
-              }}
+        {departmentPieSlices.length > 0 ? (
+          <div className={styles.pieWrap}>
+            <PieShareChart
+              slices={departmentPieSlices}
+              className={styles.pieChart}
+              ariaLabel="Department spend distribution"
             />
           </div>
         ) : null}
@@ -402,25 +435,57 @@ export default function ReportsPage() {
                   <td>{row.employees_count}</td>
                   <td>{formatMinor(row.total_minor, rowCurrency)}</td>
                   <td>{row.share_pct.toFixed(2)}%</td>
-                  <td style={{ minWidth: 180 }}>
-                    <div
-                      style={{
-                        width: '100%',
-                        background: 'rgba(0,0,0,0.08)',
-                        borderRadius: 999,
-                        height: 10,
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${Math.max(0, Math.min(100, row.share_pct))}%`,
-                          height: '100%',
-                          background: 'var(--accent)',
-                        }}
-                      />
-                    </div>
+                  <td className={styles.progressCell}>
+                    <ProgressMeter
+                      value={Math.max(0, Math.min(100, row.share_pct))}
+                      ariaLabel={`${row.department_name} share`}
+                    />
                   </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card table-wrap">
+        <h3>Department Payroll Trend ({departmentTrend?.from || '-'} to {departmentTrend?.to || '-'})</h3>
+        {departmentTrend?.mode === 'base' ? (
+          <p>
+            Base currency: {departmentTrend.base_currency} | Unconverted rows:{' '}
+            {departmentTrend.totals.excluded_unconverted_count}
+          </p>
+        ) : (
+          <p>Per-currency trend. Shares are within each month/currency bucket.</p>
+        )}
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Department</th>
+              <th>Currency</th>
+              <th>Employees</th>
+              <th>Spend</th>
+              <th>Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {departmentTrend?.rows.map((row, index) => {
+              const rowCurrency =
+                departmentTrend.mode === 'base'
+                  ? departmentTrend.base_currency
+                  : row.currency || departmentTrend.base_currency;
+              return (
+                <tr key={`${row.period_month}-${row.department_id || 'none'}-${row.currency || 'base'}-${index}`}>
+                  <td>{row.period_month}</td>
+                  <td>
+                    {row.department_name}
+                    {row.department_code ? ` (${row.department_code})` : ''}
+                  </td>
+                  <td>{rowCurrency}</td>
+                  <td>{row.employees_count}</td>
+                  <td>{formatMinor(row.total_minor, rowCurrency)}</td>
+                  <td>{row.share_pct.toFixed(2)}%</td>
                 </tr>
               );
             })}

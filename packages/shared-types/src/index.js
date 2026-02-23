@@ -127,6 +127,7 @@ const PayrollRunCreateSchema = z.object({
   period_month: monthSchema,
   cutoff_date: dateSchema.optional(),
   payday_date: dateSchema,
+  employee_ids: z.array(z.number().int().positive()).min(1).optional(),
 });
 
 const PayrollEntryUpdateSchema = z

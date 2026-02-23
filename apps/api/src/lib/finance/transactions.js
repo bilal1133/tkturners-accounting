@@ -20,6 +20,98 @@ function parseSchema(schema, payload, message) {
   return parsed.data;
 }
 
+function normalizeNumericField(rawValue, { nullable = false } = {}) {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+
+  if (nullable && (rawValue === null || String(rawValue).trim() === '')) {
+    return null;
+  }
+
+  if (!nullable && rawValue === null) {
+    return null;
+  }
+
+  if (typeof rawValue === 'number') {
+    return Number.isFinite(rawValue) ? rawValue : rawValue;
+  }
+
+  if (typeof rawValue === 'string') {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+      return nullable ? null : rawValue;
+    }
+
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : rawValue;
+  }
+
+  return rawValue;
+}
+
+function normalizeOptionalDateInput(rawValue) {
+  if (rawValue === null || rawValue === undefined) {
+    return null;
+  }
+
+  const value = String(rawValue).trim();
+  if (!value) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const dmy = value.match(/^(\d{1,2})[/.\\-](\d{1,2})[/.\\-](\d{4})$/);
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]);
+    const year = Number(dmy[3]);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  const ymd = value.match(/^(\d{4})[/.\\-](\d{1,2})[/.\\-](\d{1,2})$/);
+  if (ymd) {
+    const year = Number(ymd[1]);
+    const month = Number(ymd[2]);
+    const day = Number(ymd[3]);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  return null;
+}
+
+function normalizeSubscriptionPayload(payload = {}) {
+  const normalized = { ...(payload || {}) };
+  normalized.vendor_counterparty_id = normalizeNumericField(normalized.vendor_counterparty_id);
+  normalized.amount_minor = normalizeNumericField(normalized.amount_minor);
+  normalized.account_id = normalizeNumericField(normalized.account_id);
+  normalized.category_id = normalizeNumericField(normalized.category_id);
+  normalized.interval_count = normalizeNumericField(normalized.interval_count);
+
+  if (normalized.currency !== undefined && normalized.currency !== null) {
+    normalized.currency = String(normalized.currency).trim().toUpperCase();
+  }
+
+  if (normalized.next_run_date !== undefined) {
+    const normalizedDate = normalizeOptionalDateInput(normalized.next_run_date);
+    normalized.next_run_date = normalizedDate || normalized.next_run_date;
+  }
+
+  if (normalized.description !== undefined && normalized.description !== null) {
+    const trimmed = String(normalized.description).trim();
+    normalized.description = trimmed || null;
+  }
+
+  return normalized;
+}
+
 function computeBaseAmount({ amountMinor, currency, workspaceBaseCurrency, fxRate }) {
   if (currency === workspaceBaseCurrency) {
     return amountMinor;
@@ -1010,7 +1102,11 @@ async function listSubscriptions(workspaceId) {
 }
 
 async function createSubscription(workspaceId, actorUserId, payload) {
-  const input = parseSchema(SubscriptionInputSchema, payload, 'Invalid subscription payload.');
+  const input = parseSchema(
+    SubscriptionInputSchema,
+    normalizeSubscriptionPayload(payload),
+    'Invalid subscription payload.'
+  );
   const now = new Date().toISOString();
 
   const [subscription] = await knex()('finance_subscriptions')
@@ -1046,7 +1142,11 @@ async function createSubscription(workspaceId, actorUserId, payload) {
 }
 
 async function updateSubscription(workspaceId, actorUserId, subscriptionId, payload) {
-  const input = parseSchema(SubscriptionInputSchema.partial(), payload, 'Invalid subscription payload.');
+  const input = parseSchema(
+    SubscriptionInputSchema.partial(),
+    normalizeSubscriptionPayload(payload),
+    'Invalid subscription payload.'
+  );
   const existing = await knex()('finance_subscriptions').where({ workspace_id: workspaceId, id: subscriptionId }).first();
   assert(existing, 404, 'Subscription not found.');
 

@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { formatMinor } from '@/lib/format';
 import type { FinanceTransaction } from '@/lib/types';
+import { PageHeader } from '@/components/ui/page-header';
 
 export default function ReviewQueuePage() {
   const { token } = useAuth();
@@ -44,12 +45,7 @@ export default function ReviewQueuePage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">SLACK APPROVALS</p>
-          <h2>Review Queue</h2>
-        </div>
-      </header>
+      <PageHeader badge="SLACK APPROVALS" title="Review Queue" />
 
       {error ? <p className="error-text">{error}</p> : null}
 
@@ -73,7 +69,7 @@ export default function ReviewQueuePage() {
                 <td>{transaction.description}</td>
                 <td>{formatMinor(transaction.amount_minor, transaction.currency)}</td>
                 <td>{transaction.category_name || 'Uncategorized'}</td>
-                <td style={{ display: 'flex', gap: 8 }}>
+                <td className="inline-actions">
                   <button className="primary-button" onClick={() => changeStatus(transaction.id, 'approve')}>
                     Approve
                   </button>

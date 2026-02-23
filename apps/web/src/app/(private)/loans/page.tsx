@@ -4,13 +4,14 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
-import { apiRequest } from '@/lib/api';
+import { apiRequest, buildIdempotencyKey } from '@/lib/api';
 import { formatMinor, lastFridayOfMonth, todayDate, todayMonth } from '@/lib/format';
 import { validateWithSchema } from '@/lib/validation';
 import type { Account, Employee, EmployeeLoan } from '@/lib/types';
 import { FormActions, FormField } from '@/components/ui/form-field';
 import { Modal } from '@/components/ui/modal';
 import { PageHeader } from '@/components/ui/page-header';
+import styles from './page.module.css';
 
 type LoanForm = {
   employee_id: number;
@@ -36,6 +37,14 @@ type LoanDisbursementForm = {
   fx_rate: string;
   transfer_fee_amount_minor: string;
   transfer_fee_description: string;
+};
+
+type EditLoanForm = {
+  id: number;
+  installment_minor: number;
+  annual_interest_bps: number;
+  next_due_date: string;
+  status: EmployeeLoan['status'];
 };
 
 const initialLoanDisbursementForm: LoanDisbursementForm = {
@@ -90,6 +99,14 @@ const disbursementSchema = z.object({
   fx_rate: z.string().trim(),
   transfer_fee_amount_minor: z.string().trim(),
   transfer_fee_description: z.string().max(500, 'Fee note cannot exceed 500 characters.'),
+});
+
+const editLoanSchema = z.object({
+  id: z.number().int().positive(),
+  installment_minor: z.number().int().positive('Installment must be greater than 0.'),
+  annual_interest_bps: z.number().int().nonnegative('Interest cannot be negative.'),
+  next_due_date: dateSchema,
+  status: z.enum(['DRAFT', 'APPROVED', 'ACTIVE', 'CLOSED', 'CANCELED']),
 });
 
 function makeInitialDisbursementForm(loan?: EmployeeLoan): LoanDisbursementForm {
@@ -238,6 +255,9 @@ export default function LoansPage() {
   const [loanDisbursements, setLoanDisbursements] = useState<Record<number, LoanDisbursementForm>>({});
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isRepaymentModalOpen, setIsRepaymentModalOpen] = useState(false);
+  const [editingLoan, setEditingLoan] = useState<EditLoanForm | null>(null);
+  const [savingLoanEdit, setSavingLoanEdit] = useState(false);
+  const [deletingLoanId, setDeletingLoanId] = useState<number | null>(null);
   const [activeDisbursementLoanId, setActiveDisbursementLoanId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -382,6 +402,20 @@ export default function LoansPage() {
     setIsRepaymentModalOpen(false);
   };
 
+  const openLoanEditModal = (loan: EmployeeLoan) => {
+    setEditingLoan({
+      id: loan.id,
+      installment_minor: Number(loan.installment_minor || 0),
+      annual_interest_bps: Number(loan.annual_interest_bps || 0),
+      next_due_date: loan.next_due_date || todayDate(),
+      status: loan.status,
+    });
+  };
+
+  const closeLoanEditModal = () => {
+    setEditingLoan(null);
+  };
+
   const openDisbursementModal = (loan: EmployeeLoan) => {
     setActiveDisbursementLoanId(loan.id);
     setLoanDisbursements((previous) => ({
@@ -450,6 +484,9 @@ export default function LoansPage() {
         await apiRequest(`/finance/loans/${createdLoan.id}/disburse`, {
           token,
           method: 'POST',
+          headers: {
+            'Idempotency-Key': buildIdempotencyKey(`loan-disburse-${createdLoan.id}`),
+          },
           body: {
             disbursement_date: createDisbursementForm.disbursement_date || undefined,
             from_amount_minor: sourceAmountMinor,
@@ -515,6 +552,9 @@ export default function LoansPage() {
       await apiRequest(`/finance/loans/${loan.id}/disburse`, {
         token,
         method: 'POST',
+        headers: {
+          'Idempotency-Key': buildIdempotencyKey(`loan-disburse-${loan.id}`),
+        },
         body: {
           disbursement_date: disbursementConfig.disbursement_date || undefined,
           from_amount_minor: disbursementConfig.from_amount_minor.trim()
@@ -534,6 +574,67 @@ export default function LoansPage() {
       setError(null);
     } catch (disburseError) {
       setError(disburseError instanceof Error ? disburseError.message : 'Failed to disburse loan');
+    }
+  };
+
+  const submitLoanEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !editingLoan) return;
+
+    const parsed = validateWithSchema(editLoanSchema, {
+      id: Number(editingLoan.id),
+      installment_minor: Number(editingLoan.installment_minor || 0),
+      annual_interest_bps: Number(editingLoan.annual_interest_bps || 0),
+      next_due_date: editingLoan.next_due_date || todayDate(),
+      status: editingLoan.status,
+    });
+
+    if (!parsed.success) {
+      setError(parsed.message);
+      return;
+    }
+
+    try {
+      setSavingLoanEdit(true);
+      await apiRequest(`/finance/loans/${editingLoan.id}`, {
+        token,
+        method: 'PATCH',
+        body: {
+          installment_minor: parsed.data.installment_minor,
+          annual_interest_bps: parsed.data.annual_interest_bps,
+          next_due_date: parsed.data.next_due_date,
+          status: parsed.data.status,
+        },
+      });
+      await load();
+      closeLoanEditModal();
+      setError(null);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Failed to update loan');
+    } finally {
+      setSavingLoanEdit(false);
+    }
+  };
+
+  const removeLoan = async (loan: EmployeeLoan) => {
+    if (!token) return;
+    const confirmed = window.confirm(
+      `Delete loan #${loan.id}? Loans with linked history will be kept but marked as CANCELED.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeletingLoanId(loan.id);
+      await apiRequest(`/finance/loans/${loan.id}`, {
+        token,
+        method: 'DELETE',
+      });
+      await load();
+      setError(null);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete loan');
+    } finally {
+      setDeletingLoanId(null);
     }
   };
 
@@ -557,6 +658,9 @@ export default function LoansPage() {
       await apiRequest(`/finance/loans/${parsedRepayment.data.loan_id}/repay`, {
         token,
         method: 'POST',
+        headers: {
+          'Idempotency-Key': buildIdempotencyKey(`loan-repay-${parsedRepayment.data.loan_id}`),
+        },
         body: {
           repayment_date: parsedRepayment.data.repayment_date,
           amount_minor: parsedRepayment.data.amount_minor,
@@ -602,6 +706,16 @@ export default function LoansPage() {
   const activeDisbursementAction = activeDisbursementLoan
     ? getLoanDisbursementAction(activeDisbursementLoan)
     : null;
+  const activeDisbursementSourceMinor = activeDisbursementIsCrossCurrency
+    ? majorInputToMinor(activeDisbursementForm.from_amount_minor)
+    : Number(activeDisbursementLoan?.principal_minor || 0);
+  const activeDisbursementFeeMinor = majorInputToMinor(activeDisbursementForm.transfer_fee_amount_minor);
+  const activeDisbursementTotalDebitMinor = activeDisbursementSourceMinor + activeDisbursementFeeMinor;
+  const activeDisbursementMissingCrossFields = Boolean(
+    activeDisbursementLoan
+      && activeDisbursementIsCrossCurrency
+      && (!activeDisbursementForm.from_amount_minor.trim() || !activeDisbursementForm.fx_rate.trim())
+  );
 
   return (
     <section className="page">
@@ -724,17 +838,8 @@ export default function LoansPage() {
               />
             </FormField>
 
-            <div
-              style={{
-                gridColumn: '1 / -1',
-                border: '1px solid var(--line)',
-                borderRadius: 10,
-                padding: '0.75rem',
-                display: 'grid',
-                gap: '0.55rem',
-              }}
-            >
-              <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', color: 'var(--text)' }}>
+            <div className={styles.disbursementPanel}>
+              <label className={styles.disbursementToggle}>
                 <input
                   type="checkbox"
                   checked={createAndDisburse}
@@ -755,7 +860,7 @@ export default function LoansPage() {
                 />
                 Disburse immediately after loan creation
               </label>
-              <p style={{ margin: 0, color: 'var(--muted)' }}>
+              <p className={styles.mutedNote}>
                 Conversion path: {createDisbursementSourceCurrency} funding account {'->'} {loanCurrency} loan
                 receivable account.
               </p>
@@ -830,12 +935,12 @@ export default function LoansPage() {
                     />
                   </FormField>
                   {createDisbursementPreviewRate ? (
-                    <p style={{ margin: 0, color: 'var(--muted)' }}>
+                    <p className={styles.mutedNote}>
                       Implied FX from amounts: {createDisbursementPreviewRate.toFixed(6)} {loanCurrency}/
                       {createDisbursementSourceCurrency}
                     </p>
                   ) : null}
-                  <p style={{ margin: 0, color: 'var(--muted)' }}>
+                  <p className={styles.mutedNote}>
                     Ledger preview: OUT {formatMinor(createTotalSourceDebitMinor, createDisbursementSourceCurrency)} from{' '}
                     {selectedDisbursementAccount?.name || 'source account'} (includes fee), IN{' '}
                     {formatMinor(asNumber(loanForm.principal_minor), loanCurrency)} to loan receivable account.
@@ -919,8 +1024,8 @@ export default function LoansPage() {
             </FormField>
           </div>
           {selectedRepaymentLoan ? (
-            <div style={{ display: 'grid', gap: 8 }}>
-              <small style={{ color: 'var(--muted)' }}>
+            <div className={styles.repaymentMeta}>
+              <small className="muted-text">
                 Outstanding: {formatMinor(repaymentOutstandingMinor, selectedRepaymentLoan.currency)} | Suggested now:{' '}
                 {formatMinor(repaymentSuggestedMinor, selectedRepaymentLoan.currency)} | Remaining after this payment:{' '}
                 {formatMinor(repaymentRemainingMinor, selectedRepaymentLoan.currency)}
@@ -931,7 +1036,7 @@ export default function LoansPage() {
                   {selectedRepaymentLoan.currency}).
                 </small>
               ) : null}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className={styles.actionRow}>
                 <button
                   className="ghost-button"
                   type="button"
@@ -955,7 +1060,7 @@ export default function LoansPage() {
               </div>
             </div>
           ) : (
-            <small style={{ color: 'var(--muted)' }}>
+            <small className="muted-text">
               Select an active loan to auto-fill repayment amount and show remaining balance.
             </small>
           )}
@@ -1059,6 +1164,16 @@ export default function LoansPage() {
               </FormField>
             </div>
 
+            <small className="muted-text">
+              Ledger preview: OUT {formatMinor(activeDisbursementTotalDebitMinor, activeDisbursementSourceCurrency)} from{' '}
+              {activeDisbursementLoan.disbursement_account_name || 'source account'} (includes fee), IN{' '}
+              {formatMinor(activeDisbursementLoan.principal_minor, activeDisbursementLoan.currency)} to{' '}
+              {activeDisbursementLoan.receivable_control_account_name || 'loan receivable account'}.
+            </small>
+            {activeDisbursementMissingCrossFields ? (
+              <small className="error-text">Cross-currency disbursement requires source amount and FX rate.</small>
+            ) : null}
+
             {activeDisbursementAction?.hint ? <small className="muted-text">{activeDisbursementAction.hint}</small> : null}
 
             <FormActions>
@@ -1066,7 +1181,7 @@ export default function LoansPage() {
                 className="primary-button"
                 type="button"
                 onClick={() => disburse(activeDisbursementLoan)}
-                disabled={!activeDisbursementAction?.canDisburse}
+                disabled={!activeDisbursementAction?.canDisburse || activeDisbursementMissingCrossFields}
               >
                 {activeDisbursementAction?.label || 'Disburse'}
               </button>
@@ -1075,6 +1190,99 @@ export default function LoansPage() {
               </button>
             </FormActions>
           </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(editingLoan)}
+        onClose={closeLoanEditModal}
+        title={editingLoan ? `Edit Loan #${editingLoan.id}` : 'Edit Loan'}
+        size="md"
+      >
+        {editingLoan ? (
+          <form className="page" onSubmit={submitLoanEdit}>
+            <div className="form-grid">
+              <FormField label="Installment (minor)">
+                <input
+                  type="number"
+                  min={1}
+                  value={editingLoan.installment_minor}
+                  onChange={(event) =>
+                    setEditingLoan((previous) =>
+                      previous
+                        ? {
+                            ...previous,
+                            installment_minor: Number(event.target.value || 0),
+                          }
+                        : previous
+                    )
+                  }
+                />
+              </FormField>
+              <FormField label="Annual Interest (bps)">
+                <input
+                  type="number"
+                  min={0}
+                  value={editingLoan.annual_interest_bps}
+                  onChange={(event) =>
+                    setEditingLoan((previous) =>
+                      previous
+                        ? {
+                            ...previous,
+                            annual_interest_bps: Number(event.target.value || 0),
+                          }
+                        : previous
+                    )
+                  }
+                />
+              </FormField>
+              <FormField label="Next Due Date">
+                <input
+                  type="date"
+                  value={editingLoan.next_due_date}
+                  onChange={(event) =>
+                    setEditingLoan((previous) =>
+                      previous
+                        ? {
+                            ...previous,
+                            next_due_date: event.target.value,
+                          }
+                        : previous
+                    )
+                  }
+                />
+              </FormField>
+              <FormField label="Status">
+                <select
+                  value={editingLoan.status}
+                  onChange={(event) =>
+                    setEditingLoan((previous) =>
+                      previous
+                        ? {
+                            ...previous,
+                            status: event.target.value as EmployeeLoan['status'],
+                          }
+                        : previous
+                    )
+                  }
+                >
+                  <option value="DRAFT">DRAFT</option>
+                  <option value="APPROVED">APPROVED</option>
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="CLOSED">CLOSED</option>
+                  <option value="CANCELED">CANCELED</option>
+                </select>
+              </FormField>
+            </div>
+            <FormActions>
+              <button className="primary-button" type="submit" disabled={savingLoanEdit}>
+                {savingLoanEdit ? 'Saving...' : 'Save Loan'}
+              </button>
+              <button className="ghost-button" type="button" onClick={closeLoanEditModal} disabled={savingLoanEdit}>
+                Cancel
+              </button>
+            </FormActions>
+          </form>
         ) : null}
       </Modal>
 
@@ -1118,7 +1326,7 @@ export default function LoansPage() {
                     Receivable: {loan.receivable_control_account_name || '-'} ({loan.currency})
                   </td>
                   <td>
-                    <div style={{ display: 'grid', gap: 4 }}>
+                    <div className={styles.setupStack}>
                       <small className="muted-text">Date: {disbursement.disbursement_date || '-'}</small>
                       <small className="muted-text">
                         Source: {disbursement.from_amount_minor || '-'} {sourceCurrency}
@@ -1134,6 +1342,9 @@ export default function LoansPage() {
                   <td>{loan.disbursement_date || '-'}</td>
                   <td>
                     <div className="table-actions">
+                      <button className="ghost-button" type="button" onClick={() => openLoanEditModal(loan)}>
+                        Edit
+                      </button>
                       <button className="ghost-button" type="button" onClick={() => openDisbursementModal(loan)}>
                         Configure
                       </button>
@@ -1146,9 +1357,17 @@ export default function LoansPage() {
                       >
                         {disbursementAction.label}
                       </button>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => removeLoan(loan)}
+                        disabled={deletingLoanId === loan.id}
+                      >
+                        {deletingLoanId === loan.id ? 'Deleting...' : 'Delete'}
+                      </button>
                     </div>
                     {disbursementAction.hint ? (
-                      <small style={{ display: 'block', marginTop: 6, color: 'var(--muted)' }}>
+                      <small className={styles.hintBlock}>
                         {disbursementAction.hint}
                       </small>
                     ) : null}

@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
-import { apiRequest } from '@/lib/api';
+import { apiRequest, buildIdempotencyKey } from '@/lib/api';
 import { formatMinor, todayDate } from '@/lib/format';
 import { validateWithSchema } from '@/lib/validation';
 import type { Account, Category, Counterparty, Subscription } from '@/lib/types';
@@ -94,6 +94,15 @@ export default function SubscriptionsPage() {
   const [busySubscriptionId, setBusySubscriptionId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const accountOptions = useMemo(
+    () => accounts.filter((account) => account.is_active && account.account_kind !== 'LOAN_RECEIVABLE_CONTROL'),
+    [accounts]
+  );
+  const categoryOptions = useMemo(
+    () => categories.filter((category) => category.type === 'EXPENSE' || category.type === 'BOTH'),
+    [categories]
+  );
+
   const vendorCounterparties = useMemo(
     () => counterparties.filter((entry) => entry.kind !== 'EMPLOYEE'),
     [counterparties]
@@ -107,7 +116,7 @@ export default function SubscriptionsPage() {
     return map;
   }, [vendorCounterparties]);
 
-  const resetForm = (accountPayload: Account[] = accounts, categoryPayload: Category[] = categories) => {
+  const resetForm = (accountPayload: Account[] = accountOptions, categoryPayload: Category[] = categoryOptions) => {
     const defaultAccount = accountPayload[0];
     const defaultCategory =
       categoryPayload.find((category) => category.name === 'Subscriptions') || categoryPayload[0] || null;
@@ -140,9 +149,17 @@ export default function SubscriptionsPage() {
         return prev;
       }
 
-      const defaultAccount = accountPayload[0];
+      const activeAccounts = accountPayload.filter(
+        (account) => account.is_active && account.account_kind !== 'LOAN_RECEIVABLE_CONTROL'
+      );
+      const expenseCategories = categoryPayload.filter(
+        (category) => category.type === 'EXPENSE' || category.type === 'BOTH'
+      );
+      const defaultAccount = activeAccounts[0];
       const defaultCategory =
-        categoryPayload.find((category) => category.name === 'Subscriptions') || categoryPayload[0] || null;
+        expenseCategories.find((category) => category.name === 'Subscriptions')
+        || expenseCategories[0]
+        || null;
 
       return {
         ...prev,
@@ -192,14 +209,14 @@ export default function SubscriptionsPage() {
 
   const openCreateModal = () => {
     setEditingSubscriptionId(null);
-    resetForm();
+    resetForm(accountOptions, categoryOptions);
     setIsModalOpen(true);
   };
 
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingSubscriptionId(null);
-    resetForm();
+    resetForm(accountOptions, categoryOptions);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -224,7 +241,11 @@ export default function SubscriptionsPage() {
 
     try {
       const amountMinor = majorInputToMinor(parsed.data.amount_major);
-      const selectedAccount = accounts.find((account) => Number(account.id) === Number(parsed.data.account_id));
+      const selectedAccount = accountOptions.find((account) => Number(account.id) === Number(parsed.data.account_id));
+      if (!selectedAccount) {
+        setError('Select an active cash account for this subscription.');
+        return;
+      }
       const payload = {
         vendor_counterparty_id: await resolveVendorCounterpartyId(),
         amount_minor: amountMinor,
@@ -370,7 +391,7 @@ export default function SubscriptionsPage() {
                 value={form.account_id}
                 onChange={(event) => {
                   const accountId = Number(event.target.value);
-                  const selectedAccount = accounts.find((entry) => Number(entry.id) === accountId);
+                  const selectedAccount = accountOptions.find((entry) => Number(entry.id) === accountId);
                   setForm((prev) => ({
                     ...prev,
                     account_id: accountId,
@@ -378,7 +399,7 @@ export default function SubscriptionsPage() {
                   }));
                 }}
               >
-                {accounts.map((account) => (
+                {accountOptions.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.name}
                   </option>
@@ -391,7 +412,7 @@ export default function SubscriptionsPage() {
                 value={form.category_id}
                 onChange={(event) => setForm((prev) => ({ ...prev, category_id: Number(event.target.value) }))}
               >
-                {categories.map((category) => (
+                {categoryOptions.map((category) => (
                   <option key={category.id} value={category.id}>
                     {category.name}
                   </option>
@@ -482,6 +503,9 @@ export default function SubscriptionsPage() {
                         apiRequest(`/finance/subscriptions/${subscription.id}/generate`, {
                           token,
                           method: 'POST',
+                          headers: {
+                            'Idempotency-Key': buildIdempotencyKey(`subscription-generate-${subscription.id}`),
+                          },
                         })
                           .then(() => loadData())
                           .catch((generateError) => {

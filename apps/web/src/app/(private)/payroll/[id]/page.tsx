@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { z } from 'zod';
 
 import { useAuth } from '@/lib/auth';
-import { apiDownload, apiRequest } from '@/lib/api';
+import { apiDownload, apiRequest, buildIdempotencyKey } from '@/lib/api';
 import { formatMinor } from '@/lib/format';
 import { validateWithSchema } from '@/lib/validation';
 import type { Account, PayrollRun } from '@/lib/types';
@@ -51,6 +51,21 @@ function getStatusClassName(status: 'DRAFT' | 'APPROVED' | 'PAID') {
   return styles.statusDraft;
 }
 
+function toPositiveInt(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const normalized = Math.round(parsed);
+  return normalized > 0 ? normalized : null;
+}
+
+function toPositiveNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
 export default function PayrollRunDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -82,6 +97,52 @@ export default function PayrollRunDetailPage() {
     () => (run?.entries || []).filter((entry) => entry.status !== 'PAID').length,
     [run?.entries]
   );
+  const payoutConfigValidationError = useMemo(() => {
+    const entries = (run?.entries || []).filter((entry) => entry.status !== 'PAID');
+    for (const entry of entries) {
+      const config = paymentConfig[entry.id] || {
+        from_account_id: Number(entry.default_funding_account_id || defaultFromAccountId || 0),
+        to_account_id: Number(entry.default_payout_account_id || 0),
+        from_amount_minor: '',
+        fx_rate: '',
+        transfer_fee_amount_minor: '',
+        extra_fee_amount_minor: '',
+        extra_fee_description: '',
+      };
+
+      const fromAccountId = Number(config.from_account_id || defaultFromAccountId || entry.default_funding_account_id || 0);
+      const toAccountId = Number(config.to_account_id || entry.default_payout_account_id || 0);
+      const payoutToAccount = toAccountId ? accountById.get(toAccountId) : undefined;
+      if (!payoutToAccount) {
+        return `Payroll entry #${entry.id} is missing a destination account.`;
+      }
+
+      const payoutFromAccount = fromAccountId ? accountById.get(fromAccountId) : undefined;
+      const shouldTransfer = Boolean(
+        payoutFromAccount
+          && payoutToAccount
+          && Number(payoutFromAccount.id) !== Number(payoutToAccount.id)
+      );
+
+      if (!shouldTransfer) {
+        continue;
+      }
+      if (!payoutFromAccount) {
+        continue;
+      }
+
+      const isCrossCurrency = payoutFromAccount.currency !== payoutToAccount.currency;
+      if (!isCrossCurrency) {
+        continue;
+      }
+
+      if (!toPositiveInt(config.from_amount_minor) || !toPositiveNumber(config.fx_rate)) {
+        return `Payroll entry #${entry.id} is cross-currency and requires source amount + FX rate.`;
+      }
+    }
+
+    return null;
+  }, [accountById, defaultFromAccountId, paymentConfig, run?.entries]);
 
   const load = async () => {
     if (!token || !payrollRunId) return null;
@@ -251,6 +312,9 @@ export default function PayrollRunDetailPage() {
         token,
         method: 'POST',
         body: {},
+        headers: {
+          'Idempotency-Key': buildIdempotencyKey(`payroll-${action}-${payrollRunId}`),
+        },
       });
       const refreshedRun = await load();
       if (action === 'approve') {
@@ -279,21 +343,10 @@ export default function PayrollRunDetailPage() {
       setError('No payable entries found.');
       return;
     }
-
-    const toPositiveInt = (value: unknown) => {
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed)) return null;
-      const normalized = Math.round(parsed);
-      return normalized > 0 ? normalized : null;
-    };
-
-    const toPositiveNumber = (value: unknown) => {
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        return null;
-      }
-      return parsed;
-    };
+    if (payoutConfigValidationError) {
+      setError(payoutConfigValidationError);
+      return;
+    }
 
     const entryPayments = payableEntries.map((entry) => {
       const entryId = toPositiveInt(entry.id);
@@ -327,6 +380,10 @@ export default function PayrollRunDetailPage() {
 
       if (fromAccountId) {
         payload.from_account_id = fromAccountId;
+        const fromAccount = accountById.get(fromAccountId);
+        if (fromAccount) {
+          payload.from_currency = fromAccount.currency;
+        }
       }
 
       const fromAmount = toPositiveInt(config.from_amount_minor);
@@ -374,6 +431,9 @@ export default function PayrollRunDetailPage() {
       await apiRequest(`/finance/payroll-runs/${payrollRunId}/pay`, {
         token,
         method: 'POST',
+        headers: {
+          'Idempotency-Key': buildIdempotencyKey(`payroll-pay-${payrollRunId}`),
+        },
         body: {
           default_from_account_id: defaultFromAccountId > 0 ? defaultFromAccountId : undefined,
           entry_payments: entryPayments.length > 0 ? entryPayments : undefined,
@@ -472,7 +532,7 @@ export default function PayrollRunDetailPage() {
               className="primary-button"
               type="button"
               onClick={() => payRun()}
-              disabled={paying || run?.status !== 'APPROVED'}
+              disabled={paying || run?.status !== 'APPROVED' || Boolean(payoutConfigValidationError)}
             >
               {paying ? 'Paying...' : 'Pay Run'}
             </button>
@@ -489,6 +549,7 @@ export default function PayrollRunDetailPage() {
       />
 
       {error ? <p className="error-text">{error}</p> : null}
+      {payoutConfigValidationError ? <p className="error-text">{payoutConfigValidationError}</p> : null}
 
       <div className={`card ${styles.snapshotCard}`}>
         <div className={styles.snapshotHeader}>
@@ -675,6 +736,47 @@ export default function PayrollRunDetailPage() {
 
               const destinationOptions = cashAccounts.filter((account) => account.currency === entry.currency);
               const rowDisabled = run.status === 'PAID' || entry.status === 'PAID';
+              const configuredFromAccountId = Number(
+                config.from_account_id || defaultFromAccountId || entry.default_funding_account_id || 0
+              );
+              const configuredToAccountId = Number(config.to_account_id || entry.default_payout_account_id || 0);
+              const configuredFromAccount = configuredFromAccountId
+                ? accountById.get(configuredFromAccountId)
+                : undefined;
+              const configuredToAccount = configuredToAccountId ? accountById.get(configuredToAccountId) : undefined;
+              const payoutToMinor = Number(entry.net_paid_minor || 0);
+              const transferFeeMinor = Number(config.transfer_fee_amount_minor || 0);
+              const userProvidedFromMinor = Number(config.from_amount_minor || 0);
+              const isTransfer =
+                Boolean(configuredFromAccount && configuredToAccount)
+                && Number(configuredFromAccount?.id) !== Number(configuredToAccount?.id);
+              const isCrossCurrencyTransfer = Boolean(
+                isTransfer
+                  && configuredFromAccount
+                  && configuredToAccount
+                  && configuredFromAccount.currency !== configuredToAccount.currency
+              );
+              const previewSourceMinor = isTransfer
+                ? isCrossCurrencyTransfer
+                  ? userProvidedFromMinor
+                  : userProvidedFromMinor > 0
+                    ? userProvidedFromMinor
+                    : payoutToMinor
+                : 0;
+              const previewTotalDebitMinor = previewSourceMinor + transferFeeMinor;
+              const missingCrossCurrencyInputs =
+                Boolean(isCrossCurrencyTransfer)
+                && (!toPositiveInt(config.from_amount_minor) || !toPositiveNumber(config.fx_rate));
+              const previewLabel = isTransfer
+                ? `OUT ${formatMinor(previewTotalDebitMinor, configuredFromAccount?.currency || entry.currency)} from ${
+                    configuredFromAccount?.name || 'source account'
+                  } | IN ${formatMinor(payoutToMinor, configuredToAccount?.currency || entry.currency)} to ${
+                    configuredToAccount?.name || 'destination account'
+                  }`
+                : `Direct payout expense from ${configuredToAccount?.name || 'destination account'} (${formatMinor(
+                    payoutToMinor,
+                    configuredToAccount?.currency || entry.currency
+                  )})`;
               const hasActiveLoan = Boolean(
                 entry.loan_id && ['ACTIVE', 'APPROVED'].includes(String(entry.loan_status || ''))
               );
@@ -873,6 +975,10 @@ export default function PayrollRunDetailPage() {
                       placeholder="Optional fee note"
                       disabled={rowDisabled}
                     />
+                    <span className={styles.previewText}>{previewLabel}</span>
+                    {missingCrossCurrencyInputs ? (
+                      <span className={styles.previewError}>Source amount + FX rate required for cross-currency payout.</span>
+                    ) : null}
                   </td>
                   <td className={styles.linkedCell}>
                     {linkedTransactions.length > 0 ? (

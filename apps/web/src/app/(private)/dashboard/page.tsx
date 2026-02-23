@@ -6,6 +6,7 @@ import { StatCard } from '@/components/stat-card';
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { todayMonth } from '@/lib/format';
+import { PageHeader } from '@/components/ui/page-header';
 
 type SummaryResponse = {
   month: string;
@@ -51,12 +52,11 @@ export default function DashboardPage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">MONTHLY SNAPSHOT</p>
-          <h2>{month} Summary</h2>
-        </div>
-      </header>
+      <PageHeader
+        badge="MONTHLY SNAPSHOT"
+        title={`${month} Summary`}
+        subtitle="Track topline performance, cash movement, and review workload in one glance."
+      />
 
       {error ? <p className="error-text">{error}</p> : null}
 

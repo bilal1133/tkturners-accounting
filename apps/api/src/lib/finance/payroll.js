@@ -314,6 +314,83 @@ function normalizeLoanRepaymentPayload(payload = {}) {
   return pruneUndefinedFields(normalized);
 }
 
+function normalizePayrollPayPayload(payload = {}) {
+  const normalized = { ...(payload || {}) };
+
+  normalizeOptionalDateField(normalized, 'payment_date', 'Invalid payroll pay payload.');
+
+  if (Array.isArray(normalized.entry_ids)) {
+    normalized.entry_ids = normalized.entry_ids
+      .map((value) => normalizeOptionalNumericField(value))
+      .filter((value) => value !== undefined && value !== null && Number.isFinite(Number(value)))
+      .map((value) => Number(value));
+  }
+
+  normalized.default_from_account_id = normalizeOptionalNumericField(normalized.default_from_account_id);
+  normalized.default_to_account_id = normalizeOptionalNumericField(normalized.default_to_account_id);
+
+  if (Array.isArray(normalized.entry_payments)) {
+    normalized.entry_payments = normalized.entry_payments
+      .map((entry) => {
+        const row = { ...(entry || {}) };
+        row.entry_id = normalizeOptionalNumericField(row.entry_id);
+        row.from_account_id = normalizeOptionalNumericField(row.from_account_id);
+        row.to_account_id = normalizeOptionalNumericField(row.to_account_id);
+        row.from_amount_minor = normalizeOptionalNumericField(row.from_amount_minor);
+        row.to_amount_minor = normalizeOptionalNumericField(row.to_amount_minor);
+        row.fx_rate = normalizeOptionalNumericField(row.fx_rate);
+        row.transfer_fee_amount_minor = normalizeOptionalNumericField(row.transfer_fee_amount_minor);
+        row.transfer_fee_category_id = normalizeOptionalNumericField(row.transfer_fee_category_id);
+        row.transfer_fee_fx_rate_to_base = normalizeOptionalNumericField(row.transfer_fee_fx_rate_to_base);
+        if (typeof row.transfer_fee_currency === 'string') {
+          const trimmed = row.transfer_fee_currency.trim().toUpperCase();
+          row.transfer_fee_currency = trimmed || undefined;
+        }
+        if (typeof row.transfer_fee_description === 'string') {
+          const trimmed = row.transfer_fee_description.trim();
+          row.transfer_fee_description = trimmed || undefined;
+        }
+
+        if (typeof row.from_currency === 'string') {
+          const trimmed = row.from_currency.trim().toUpperCase();
+          row.from_currency = trimmed || undefined;
+        }
+        if (typeof row.to_currency === 'string') {
+          const trimmed = row.to_currency.trim().toUpperCase();
+          row.to_currency = trimmed || undefined;
+        }
+
+        if (Array.isArray(row.additional_fees)) {
+          row.additional_fees = row.additional_fees
+            .map((fee) => {
+              const normalizedFee = { ...(fee || {}) };
+              normalizedFee.amount_minor = normalizeOptionalNumericField(normalizedFee.amount_minor);
+              normalizedFee.category_id = normalizeOptionalNumericField(normalizedFee.category_id);
+              normalizedFee.fx_rate_to_base = normalizeOptionalNumericField(normalizedFee.fx_rate_to_base);
+
+              if (typeof normalizedFee.currency === 'string') {
+                const trimmed = normalizedFee.currency.trim().toUpperCase();
+                normalizedFee.currency = trimmed || undefined;
+              }
+
+              if (typeof normalizedFee.description === 'string') {
+                const trimmed = normalizedFee.description.trim();
+                normalizedFee.description = trimmed || undefined;
+              }
+
+              return pruneUndefinedFields(normalizedFee);
+            })
+            .filter((fee) => fee.amount_minor !== undefined);
+        }
+
+        return pruneUndefinedFields(row);
+      })
+      .filter((row) => row.entry_id !== undefined);
+  }
+
+  return pruneUndefinedFields(normalized);
+}
+
 async function resolveAccount(workspaceId, accountId, { mustBeActive = true } = {}) {
   const query = knex()('finance_accounts').where({ workspace_id: workspaceId, id: accountId });
   if (mustBeActive) {
@@ -935,6 +1012,12 @@ async function getPayrollRun(workspaceId, payrollRunId) {
   const run = await knex()('finance_payroll_runs').where({ workspace_id: workspaceId, id: payrollRunId }).first();
   assert(run, 404, 'Payroll run not found.');
 
+  const selectedEmployeeRows = await knex()('finance_payroll_run_employees')
+    .select('employee_id')
+    .where({ workspace_id: workspaceId, payroll_run_id: payrollRunId })
+    .orderBy('employee_id', 'asc');
+  const selectedEmployeeIds = selectedEmployeeRows.map((row) => Number(row.employee_id));
+
   const entries = await knex()
     .select(
       'e.*',
@@ -983,6 +1066,8 @@ async function getPayrollRun(workspaceId, payrollRunId) {
 
   return {
     ...run,
+    selected_employee_ids: selectedEmployeeIds,
+    selected_employees_count: selectedEmployeeIds.length,
     entries: entries.map((entry) => {
       const {
         loan_installment_minor: loanInstallmentMinor,
@@ -1199,6 +1284,22 @@ async function createPayrollRun(workspaceId, actorUserId, payload) {
     .first();
   assert(!existing, 409, 'Payroll run already exists for this month.');
 
+  const scopedEmployeeIds = Array.isArray(input.employee_ids)
+    ? Array.from(new Set(input.employee_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)))
+    : null;
+
+  if (scopedEmployeeIds && scopedEmployeeIds.length > 0) {
+    const foundEmployees = await knex()('finance_employees')
+      .select('id')
+      .where({ workspace_id: workspaceId })
+      .whereIn('id', scopedEmployeeIds);
+    assert(
+      foundEmployees.length === scopedEmployeeIds.length,
+      400,
+      'One or more selected employees are invalid for this workspace.'
+    );
+  }
+
   const now = new Date().toISOString();
   const [run] = await knex()('finance_payroll_runs')
     .insert({
@@ -1216,6 +1317,18 @@ async function createPayrollRun(workspaceId, actorUserId, payload) {
     })
     .returning('*');
 
+  if (scopedEmployeeIds && scopedEmployeeIds.length > 0) {
+    await knex()('finance_payroll_run_employees').insert(
+      scopedEmployeeIds.map((employeeId) => ({
+        payroll_run_id: run.id,
+        employee_id: employeeId,
+        workspace_id: workspaceId,
+        created_by_user_id: actorUserId,
+        created_at: now,
+      }))
+    );
+  }
+
   await addAuditLog({
     workspaceId,
     actorUserId,
@@ -1223,7 +1336,10 @@ async function createPayrollRun(workspaceId, actorUserId, payload) {
     entityId: run.id,
     action: 'CREATE',
     before: null,
-    after: run,
+    after: {
+      ...run,
+      selected_employee_ids: scopedEmployeeIds || [],
+    },
   });
 
   return getPayrollRun(workspaceId, run.id);
@@ -1318,9 +1434,19 @@ async function generatePayrollRunEntries(workspace, actorUserId, payrollRunId) {
     run = normalizedRun;
   }
 
-  const employees = await knex()('finance_employees')
-    .where({ workspace_id: workspace.id, status: 'ACTIVE' })
-    .orderBy('full_name', 'asc');
+  const scopedEmployeeRows = await knex()('finance_payroll_run_employees')
+    .select('employee_id')
+    .where({ workspace_id: workspace.id, payroll_run_id: run.id });
+  const scopedEmployeeIds = scopedEmployeeRows.map((row) => Number(row.employee_id));
+
+  const employeesQuery = knex()('finance_employees').where({ workspace_id: workspace.id });
+  if (scopedEmployeeIds.length > 0) {
+    employeesQuery.whereIn('id', scopedEmployeeIds);
+  } else {
+    employeesQuery.andWhere({ status: 'ACTIVE' });
+  }
+  const employees = await employeesQuery.orderBy('full_name', 'asc');
+  assert(employees.length > 0, 409, 'No employees found for this payroll run.');
 
   const createdOrUpdated = [];
 
@@ -1724,7 +1850,8 @@ async function applyLoanPayment({
 }
 
 async function payPayrollRun(workspace, actorUserId, payrollRunId, payload) {
-  const input = parseSchema(PayrollPayActionSchema, payload || {}, 'Invalid payroll pay payload.');
+  const normalizedPayload = normalizePayrollPayPayload(payload || {});
+  const input = parseSchema(PayrollPayActionSchema, normalizedPayload, 'Invalid payroll pay payload.');
 
   const run = await knex()('finance_payroll_runs').where({ workspace_id: workspace.id, id: payrollRunId }).first();
   assert(run, 404, 'Payroll run not found.');
@@ -2277,6 +2404,59 @@ async function updateLoan(workspaceId, actorUserId, loanId, payload) {
   });
 
   return getLoan(workspaceId, loan.id);
+}
+
+async function deleteLoan(workspaceId, actorUserId, loanId) {
+  const existing = await knex()('finance_employee_loans').where({ workspace_id: workspaceId, id: loanId }).first();
+  assert(existing, 404, 'Loan not found.');
+
+  const [repaymentCountRow, scheduleCountRow, payrollLinkCountRow] = await Promise.all([
+    knex()('finance_loan_repayments').where({ workspace_id: workspaceId, loan_id: loanId }).count('* as count').first(),
+    knex()('finance_loan_schedules').where({ loan_id: loanId }).count('* as count').first(),
+    knex()('finance_payroll_entries').where({ workspace_id: workspaceId, loan_id: loanId }).count('* as count').first(),
+  ]);
+
+  const repaymentCount = Number(repaymentCountRow?.count || 0);
+  const scheduleCount = Number(scheduleCountRow?.count || 0);
+  const payrollLinkCount = Number(payrollLinkCountRow?.count || 0);
+  const hasFinancialHistory =
+    Boolean(existing.disbursement_transaction_id) || repaymentCount > 0 || scheduleCount > 0 || payrollLinkCount > 0;
+
+  if (hasFinancialHistory) {
+    const [loan] = await knex()('finance_employee_loans')
+      .where({ workspace_id: workspaceId, id: loanId })
+      .update({
+        status: 'CANCELED',
+        updated_at: new Date().toISOString(),
+      })
+      .returning('*');
+
+    await addAuditLog({
+      workspaceId,
+      actorUserId,
+      entityType: 'EMPLOYEE_LOAN',
+      entityId: loan.id,
+      action: 'SOFT_DELETE',
+      before: existing,
+      after: loan,
+    });
+
+    return { deleted: false, soft_deleted: true, loan };
+  }
+
+  await knex()('finance_employee_loans').where({ workspace_id: workspaceId, id: loanId }).delete();
+
+  await addAuditLog({
+    workspaceId,
+    actorUserId,
+    entityType: 'EMPLOYEE_LOAN',
+    entityId: loanId,
+    action: 'DELETE',
+    before: existing,
+    after: null,
+  });
+
+  return { deleted: true, soft_deleted: false };
 }
 
 async function disburseLoan(workspace, actorUserId, loanId, payload) {
@@ -2977,6 +3157,151 @@ async function payrollByDepartmentReport(workspace, month, mode = 'base') {
   };
 }
 
+async function payrollDepartmentTrendReport(workspace, fromMonth, toMonth, mode = 'base') {
+  assert(/^\d{4}-\d{2}$/.test(fromMonth), 400, 'from must be in YYYY-MM format.');
+  assert(/^\d{4}-\d{2}$/.test(toMonth), 400, 'to must be in YYYY-MM format.');
+  assert(['base', 'per_currency'].includes(mode), 400, 'mode must be either base or per_currency.');
+  assert(fromMonth <= toMonth, 400, 'from must be before or equal to to.');
+
+  const rows = await knex()
+    .select(
+      'r.period_month',
+      'e.employee_id',
+      'e.currency',
+      knex().raw('COALESCE(emp.department_id, 0)::bigint as department_id'),
+      knex().raw("COALESCE(NULLIF(TRIM(dept.name), ''), 'Unassigned') as department_name"),
+      knex().raw("NULLIF(TRIM(dept.code), '') as department_code"),
+      knex().raw(
+        'GREATEST((e.base_salary_minor + e.allowances_minor - e.non_loan_deductions_minor), 0)::bigint as expense_minor'
+      ),
+      knex().raw(
+        `CASE
+          WHEN salary_tx.base_amount_minor IS NOT NULL THEN salary_tx.base_amount_minor
+          WHEN e.currency = ? THEN GREATEST((e.base_salary_minor + e.allowances_minor - e.non_loan_deductions_minor), 0)::bigint
+          ELSE NULL
+        END as base_amount_minor`,
+        [workspace.base_currency]
+      )
+    )
+    .from('finance_payroll_entries as e')
+    .innerJoin('finance_payroll_runs as r', 'r.id', 'e.payroll_run_id')
+    .innerJoin('finance_employees as emp', 'emp.id', 'e.employee_id')
+    .leftJoin('finance_departments as dept', 'dept.id', 'emp.department_id')
+    .leftJoin('finance_transactions as salary_tx', 'salary_tx.id', 'e.salary_expense_transaction_id')
+    .where('e.workspace_id', workspace.id)
+    .andWhere('r.period_month', '>=', fromMonth)
+    .andWhere('r.period_month', '<=', toMonth)
+    .andWhere('e.status', 'PAID')
+    .orderBy('r.period_month', 'asc')
+    .orderBy('department_name', 'asc')
+    .orderBy('e.employee_id', 'asc');
+
+  const grouped = new Map();
+  const periodTotals = new Map();
+  let excludedUnconvertedCount = 0;
+
+  for (const row of rows) {
+    const period = String(row.period_month);
+    const expenseMinor = toSafeMinor(row.expense_minor);
+    if (expenseMinor <= 0) {
+      continue;
+    }
+
+    if (mode === 'per_currency') {
+      const key = `${period}:${row.department_id}:${row.currency}`;
+      const current = grouped.get(key) || {
+        period_month: period,
+        department_id: Number(row.department_id) || null,
+        department_name: row.department_name,
+        department_code: row.department_code || null,
+        currency: row.currency,
+        total_minor: 0,
+        employee_ids: new Set(),
+      };
+
+      current.total_minor += expenseMinor;
+      current.employee_ids.add(Number(row.employee_id));
+      grouped.set(key, current);
+
+      const periodCurrencyKey = `${period}:${row.currency}`;
+      periodTotals.set(periodCurrencyKey, (periodTotals.get(periodCurrencyKey) || 0) + expenseMinor);
+      continue;
+    }
+
+    const key = `${period}:${row.department_id}`;
+    const current = grouped.get(key) || {
+      period_month: period,
+      department_id: Number(row.department_id) || null,
+      department_name: row.department_name,
+      department_code: row.department_code || null,
+      total_minor: 0,
+      employee_ids: new Set(),
+      excluded_unconverted_count: 0,
+    };
+
+    const baseAmountMinor = row.base_amount_minor === null ? null : toSafeMinor(row.base_amount_minor);
+    if (baseAmountMinor === null) {
+      current.excluded_unconverted_count += 1;
+      excludedUnconvertedCount += 1;
+    } else {
+      current.total_minor += baseAmountMinor;
+      periodTotals.set(period, (periodTotals.get(period) || 0) + baseAmountMinor);
+    }
+
+    current.employee_ids.add(Number(row.employee_id));
+    grouped.set(key, current);
+  }
+
+  const resultRows = Array.from(grouped.values()).map((value) => {
+    const shareKey = mode === 'per_currency' ? `${value.period_month}:${value.currency}` : value.period_month;
+    const periodTotal = periodTotals.get(shareKey) || 0;
+    return {
+      period_month: value.period_month,
+      department_id: value.department_id,
+      department_name: value.department_name,
+      department_code: value.department_code,
+      currency: value.currency || null,
+      total_minor: value.total_minor,
+      employees_count: value.employee_ids.size,
+      excluded_unconverted_count: value.excluded_unconverted_count || 0,
+      share_pct: periodTotal > 0 ? Number(((value.total_minor / periodTotal) * 100).toFixed(2)) : 0,
+    };
+  });
+
+  resultRows.sort((left, right) => {
+    if (left.period_month === right.period_month) {
+      if ((left.currency || '') === (right.currency || '')) {
+        return right.total_minor - left.total_minor;
+      }
+      return String(left.currency || '').localeCompare(String(right.currency || ''));
+    }
+    return String(left.period_month).localeCompare(String(right.period_month));
+  });
+
+  const totalsByPeriod = Array.from(periodTotals.entries())
+    .map(([periodKey, totalMinor]) => {
+      const [periodMonth, currency] = String(periodKey).split(':');
+      return {
+        period_month: periodMonth,
+        currency: mode === 'per_currency' ? currency : workspace.base_currency,
+        total_minor: totalMinor,
+      };
+    })
+    .sort((a, b) => String(a.period_month).localeCompare(String(b.period_month)));
+
+  return {
+    from: fromMonth,
+    to: toMonth,
+    mode,
+    base_currency: workspace.base_currency,
+    totals: {
+      excluded_unconverted_count: excludedUnconvertedCount,
+    },
+    totals_by_period: totalsByPeriod,
+    rows: resultRows,
+  };
+}
+
 async function loanOutstandingReport(workspaceId, asOf) {
   assert(/^\d{4}-\d{2}-\d{2}$/.test(asOf), 400, 'as_of must be in YYYY-MM-DD format.');
 
@@ -3125,11 +3450,13 @@ module.exports = {
   getLoan,
   createLoan,
   updateLoan,
+  deleteLoan,
   disburseLoan,
   repayLoan,
 
   payrollSummaryReport,
   payrollByDepartmentReport,
+  payrollDepartmentTrendReport,
   loanOutstandingReport,
   employeeLedgerReport,
 

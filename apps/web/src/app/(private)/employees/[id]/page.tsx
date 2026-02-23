@@ -74,6 +74,10 @@ type TimelineEvent = {
 
 type TimelineResponse = {
   employee: Employee & { active_loan?: LoanSummary | null };
+  payroll_entries?: Array<Record<string, unknown>>;
+  loans?: Array<Record<string, unknown>>;
+  repayments?: Array<Record<string, unknown>>;
+  transactions?: Array<Record<string, unknown>>;
   events: TimelineEvent[];
 };
 
@@ -157,6 +161,46 @@ export default function EmployeeDetailPage() {
 
     return `Department #${employee.department_id}`;
   }, [departments, employee?.department_code, employee?.department_id, employee?.department_name]);
+  const traceability = useMemo(() => {
+    const events = payload?.events || [];
+    const payrollEvents = events.filter((event) => event.type === 'PAYROLL');
+    const loanEvents = events.filter((event) => event.type === 'LOAN');
+    const repaymentEvents = events.filter((event) => event.type === 'LOAN_REPAYMENT');
+
+    const totalSalaryPaidMinor = payrollEvents.reduce((sum, event) => {
+      const paidMinor =
+        typeof event.data.salary_amount_minor === 'number'
+          ? event.data.salary_amount_minor
+          : typeof event.data.net_paid_minor === 'number'
+            ? event.data.net_paid_minor
+            : 0;
+      return sum + paidMinor;
+    }, 0);
+
+    const totalLoanDisbursedMinor = loanEvents.reduce((sum, event) => {
+      return sum + (typeof event.data.principal_minor === 'number' ? event.data.principal_minor : 0);
+    }, 0);
+
+    const totalLoanRepaidMinor = repaymentEvents.reduce((sum, event) => {
+      return sum + (typeof event.data.total_paid_minor === 'number' ? event.data.total_paid_minor : 0);
+    }, 0);
+
+    const latestPayrollEvent =
+      payrollEvents.sort((left, right) => String(right.date).localeCompare(String(left.date)))[0] || null;
+    const latestLoanEvent =
+      loanEvents.sort((left, right) => String(right.date).localeCompare(String(left.date)))[0] || null;
+
+    return {
+      payroll_events_count: payrollEvents.length,
+      loan_events_count: loanEvents.length,
+      repayment_events_count: repaymentEvents.length,
+      total_salary_paid_minor: totalSalaryPaidMinor,
+      total_loan_disbursed_minor: totalLoanDisbursedMinor,
+      total_loan_repaid_minor: totalLoanRepaidMinor,
+      latest_payroll_event: latestPayrollEvent,
+      latest_loan_event: latestLoanEvent,
+    };
+  }, [payload?.events]);
 
   const load = async () => {
     if (!token || !employeeId) return;
@@ -329,8 +373,74 @@ export default function EmployeeDetailPage() {
                 </p>
               ) : null}
             </article>
+            <article className="stat-card">
+              <p>Total Salary Paid</p>
+              <h3>{formatMinor(traceability.total_salary_paid_minor, currency)}</h3>
+              <p>{traceability.payroll_events_count} payroll events</p>
+            </article>
+            <article className="stat-card">
+              <p>Total Loan Disbursed</p>
+              <h3>{formatMinor(traceability.total_loan_disbursed_minor, activeLoanCurrency)}</h3>
+              <p>{traceability.loan_events_count} loan events</p>
+            </article>
+            <article className="stat-card">
+              <p>Total Loan Repaid</p>
+              <h3>{formatMinor(traceability.total_loan_repaid_minor, activeLoanCurrency)}</h3>
+              <p>{traceability.repayment_events_count} repayment events</p>
+            </article>
+            <article className="stat-card">
+              <p>Latest Salary Route</p>
+              <h3>{traceability.latest_payroll_event?.data.from_account_name || 'Not paid yet'}</h3>
+              <p>
+                {traceability.latest_payroll_event?.data.to_account_name
+                  ? `to ${traceability.latest_payroll_event?.data.to_account_name}`
+                  : '-'}
+              </p>
+            </article>
           </div>
           {employee.notes ? <p className="muted-text">{employee.notes}</p> : null}
+        </div>
+      ) : null}
+
+      {Array.isArray(payload?.loans) && payload.loans.length > 0 ? (
+        <div className="card table-wrap">
+          <h3>Loan Portfolio</h3>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Loan</th>
+                <th>Status</th>
+                <th>Principal</th>
+                <th>Outstanding</th>
+                <th>Installment</th>
+                <th>Disbursement</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payload.loans.map((loan, index) => {
+                const loanCurrency = typeof loan.currency === 'string' ? loan.currency : currency;
+                const outstandingMinor =
+                  Number(loan.outstanding_principal_minor || 0) + Number(loan.outstanding_interest_minor || 0);
+                return (
+                  <tr key={`${loan.id || index}`}>
+                    <td>#{Number(loan.id || 0)}</td>
+                    <td>{String(loan.status || '-')}</td>
+                    <td>{formatMinor(Number(loan.principal_minor || 0), loanCurrency)}</td>
+                    <td>{formatMinor(outstandingMinor, loanCurrency)}</td>
+                    <td>{formatMinor(Number(loan.installment_minor || 0), loanCurrency)}</td>
+                    <td>
+                      {String(loan.disbursement_date || '-')}
+                      <br />
+                      <span className="muted-text">
+                        {String(loan.disbursement_account_name || '-')} {'->'}{' '}
+                        {String(loan.receivable_control_account_name || '-')}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       ) : null}
 
@@ -354,8 +464,7 @@ export default function EmployeeDetailPage() {
                 value={form.payroll_currency}
                 onChange={(event) => {
                   const payrollCurrency = event.target.value;
-                  const firstMatch = settlementAccountOptions.find((account) => account.currency === payrollCurrency)
-                    || accountOptions.find((account) => account.currency === payrollCurrency);
+                  const firstMatch = accountOptions.find((account) => account.currency === payrollCurrency) || null;
                   setForm((prev) => ({
                     ...prev,
                     payroll_currency: payrollCurrency,

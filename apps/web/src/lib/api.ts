@@ -88,4 +88,14 @@ export async function apiDownload(path: string, token: string) {
   URL.revokeObjectURL(url);
 }
 
+export function buildIdempotencyKey(scope: string) {
+  const safeScope = String(scope || 'finance-action').replace(/[^a-zA-Z0-9:_-]/g, '-').slice(0, 60);
+  const randomPart =
+    typeof globalThis !== 'undefined' && globalThis.crypto && 'randomUUID' in globalThis.crypto
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  return `${safeScope}:${randomPart}`.slice(0, 120);
+}
+
 export { API_BASE };

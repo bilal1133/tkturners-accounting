@@ -66,6 +66,7 @@ module.exports = {
     { method: 'POST', path: '/finance/loans', handler: 'finance.createLoan' },
     { method: 'GET', path: '/finance/loans/:id', handler: 'finance.getLoan' },
     { method: 'PATCH', path: '/finance/loans/:id', handler: 'finance.updateLoan' },
+    { method: 'DELETE', path: '/finance/loans/:id', handler: 'finance.deleteLoan' },
     { method: 'POST', path: '/finance/loans/:id/disburse', handler: 'finance.disburseLoan' },
     { method: 'POST', path: '/finance/loans/:id/repay', handler: 'finance.repayLoan' },
 
@@ -75,6 +76,7 @@ module.exports = {
     { method: 'GET', path: '/finance/reports/account-balances', handler: 'finance.accountBalances' },
     { method: 'GET', path: '/finance/reports/payroll-summary', handler: 'finance.payrollSummary' },
     { method: 'GET', path: '/finance/reports/payroll-by-department', handler: 'finance.payrollByDepartment' },
+    { method: 'GET', path: '/finance/reports/payroll-department-trend', handler: 'finance.payrollDepartmentTrend' },
     { method: 'GET', path: '/finance/reports/loan-outstanding', handler: 'finance.loanOutstanding' },
     { method: 'GET', path: '/finance/reports/employee-ledger', handler: 'finance.employeeLedger' },
 

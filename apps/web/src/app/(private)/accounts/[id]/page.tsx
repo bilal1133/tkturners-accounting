@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { apiRequest } from '@/lib/api';
 import { formatMinor } from '@/lib/format';
+import { PageHeader } from '@/components/ui/page-header';
 
 type AccountDetail = {
   id: number;
@@ -51,12 +52,7 @@ export default function AccountDetailPage() {
 
   return (
     <section className="page">
-      <header className="page-head">
-        <div>
-          <p className="badge">ACCOUNT LEDGER</p>
-          <h2>{detail.name}</h2>
-        </div>
-      </header>
+      <PageHeader badge="ACCOUNT LEDGER" title={detail.name} />
 
       <div className="grid-cards">
         <div className="stat-card">

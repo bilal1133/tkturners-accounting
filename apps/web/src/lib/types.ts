@@ -161,6 +161,8 @@ export type PayrollRun = {
   approved_by_user_id: number | null;
   approved_at: string | null;
   paid_at: string | null;
+  selected_employee_ids?: number[];
+  selected_employees_count?: number;
   entries_count?: number;
   total_net_paid_minor?: number;
   total_loan_deduction_minor?: number;
