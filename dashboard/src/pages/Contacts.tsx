@@ -33,6 +33,17 @@ export const ContactsPage = () => {
     }
   };
 
+  const getContactType = (contact: any) => {
+    if (contact.contact_type && contact.contact_type.length > 0) {
+      const comp = contact.contact_type[0].__component;
+      if (comp === "contact-type.employee") return "Employee";
+      if (comp === "contact-type.vendor") return "Vendor";
+      if (comp === "contact-type.customer") return "Customer";
+      return comp;
+    }
+    return "Unknown";
+  };
+
   return (
     <div className="space-y-8 text-slate-200">
       <div className="flex justify-between items-center">
@@ -79,7 +90,7 @@ export const ContactsPage = () => {
                         </p>
                       </div>
                       <span className="text-xs px-2 py-1 rounded bg-slate-800 font-medium border border-slate-700">
-                        {c.type}
+                        {getContactType(c)}
                       </span>
                     </Link>
                   </li>

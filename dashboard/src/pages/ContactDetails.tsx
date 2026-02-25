@@ -18,6 +18,15 @@ export const ContactDetailsPage = () => {
   const [contact, setContact] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
+  
+  const [payrolls, setPayrolls] = useState<any[]>([]);
+  const [payrollsMeta, setPayrollsMeta] = useState<any>(null);
+  const [payrollPage, setPayrollPage] = useState(1);
+
+  const [loans, setLoans] = useState<any[]>([]);
+  const [loansMeta, setLoansMeta] = useState<any>(null);
+  const [loanPage, setLoanPage] = useState(1);
+
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,11 +35,37 @@ export const ContactDetailsPage = () => {
     }
   }, [id]);
 
+  useEffect(() => {
+    if (id) {
+      loadPayrolls();
+    }
+  }, [id, payrollPage]);
+
+  const loadPayrolls = async () => {
+    try {
+      const res = await api.get(`/payrolls/employee/${id}?pagination[page]=${payrollPage}&pagination[pageSize]=5`);
+      setPayrolls(res.data.data);
+      setPayrollsMeta(res.data.meta);
+    } catch (e) {
+      console.error("Failed to load generic payrolls", e);
+    }
+  };
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const contactRes = await api.get(`/contacts/${id}?populate=*`);
-      setContact(contactRes.data.data);
+      // Fetch contact with nested loans for the dynamic zone
+      const contactRes = await api.get(`/contacts/${id}?populate=contact_type.loans`);
+      const contactData = contactRes.data.data;
+      setContact(contactData);
+      
+      // Extract loans from the dynamic zone if employee
+      if (contactData.contact_type?.length > 0 && contactData.contact_type[0].__component === "contact-type.employee") {
+         const empLoans = contactData.contact_type[0].loans || [];
+         setLoans(empLoans);
+         // Client side pagination metadata mock since it's nested data
+         setLoansMeta({ pagination: { page: 1, pageSize: 10, pageCount: 1, total: empLoans.length } });
+      }
 
       const txRes = await api.get(
         `/transactions?filters[contact][$eq]=${id}&populate[0]=type.currency&sort=date_time:desc`,
@@ -66,13 +101,37 @@ export const ContactDetailsPage = () => {
           <h1 className="text-3xl font-bold text-white flex items-center gap-3">
             <User className="text-indigo-500" />
             {contact.name}
+  const getContactType = (contact: any) => {
+    if (contact.contact_type && contact.contact_type.length > 0) {
+      const comp = contact.contact_type[0].__component;
+      if (comp === "contact-type.employee") return "Employee";
+      if (comp === "contact-type.vendor") return "Vendor";
+      if (comp === "contact-type.customer") return "Customer";
+      return comp;
+    }
+    return "Unknown";
+  };
+
+  const contactTypeLabel = contact ? getContactType(contact) : "Unknown";
+  const employeeData = contactTypeLabel === "Employee" ? contact.contact_type.find((c: any) => c.__component === "contact-type.employee") : null;
+  const customerData = contactTypeLabel === "Customer" ? contact.contact_type.find((c: any) => c.__component === "contact-type.customer") : null;
+
+  return (
+    <div className="space-y-8 text-slate-200">
+      <div className="flex items-center gap-4">
+        <Link
+          to="/contacts"
+          className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400"
+        >
+          <ArrowLeft size={20} />
+        </Link>
+        <div>
+          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+            <User className="text-indigo-500" />
+            {contact.name}
           </h1>
           <p className="text-slate-400 mt-1">
-            {contact.type === "Client"
-              ? "Client Profile"
-              : contact.type === "Vendor"
-                ? "Vendor Profile"
-                : "Employee Profile"}
+            {contactTypeLabel} Profile
           </p>
         </div>
       </div>
@@ -82,14 +141,14 @@ export const ContactDetailsPage = () => {
           <div className="mb-6">
             <span
               className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${
-                contact.type === "Client"
+                contactTypeLabel === "Customer"
                   ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
-                  : contact.type === "Vendor"
+                  : contactTypeLabel === "Vendor"
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                     : "bg-amber-500/10 text-amber-400 border-amber-500/20"
               }`}
             >
-              {contact.type}
+              {contactTypeLabel}
             </span>
           </div>
           {contact.email && (
@@ -120,19 +179,31 @@ export const ContactDetailsPage = () => {
             </div>
           )}
 
-          {contact.type === "Employee" && contact.base_salary && (
+          {employeeData && (
             <div className="mt-6 pt-4 border-t border-slate-800">
               <p className="text-xs text-slate-500 font-medium tracking-wide uppercase">
-                Employee Details
+                Employee File
               </p>
-              <p className="text-lg font-semibold text-white mt-1">
-                Base Salary:{" "}
-                {parseFloat(contact.base_salary).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                })}{" "}
-                / mo
-              </p>
+              {employeeData.position && <p className="text-sm text-slate-300 mt-2">Role: {employeeData.position}</p>}
+              {employeeData.salary && (
+                 <p className="text-lg font-semibold text-white mt-1">
+                   Base Salary:{" "}
+                   {parseFloat(employeeData.salary).toLocaleString(undefined, {
+                     minimumFractionDigits: 2,
+                   })}{" "}
+                   / mo
+                 </p>
+              )}
             </div>
+          )}
+          {customerData && (
+             <div className="mt-6 pt-4 border-t border-slate-800">
+               <p className="text-xs text-slate-500 font-medium tracking-wide uppercase">
+                 Company Profile
+               </p>
+               {customerData.company_name && <p className="text-sm font-semibold text-slate-300 mt-2">{customerData.company_name}</p>}
+               {customerData.company_vat && <p className="text-sm text-slate-400 mt-1">VAT: {customerData.company_vat}</p>}
+             </div>
           )}
         </div>
 
@@ -257,6 +328,83 @@ export const ContactDetailsPage = () => {
           </table>
         </div>
       </div>
+
+      {contactTypeLabel === "Employee" && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-white">Loan History</h2>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
+                    <th className="p-4 font-medium">Disbursed</th>
+                    <th className="p-4 font-medium">Principal</th>
+                    <th className="p-4 font-medium">Remaining</th>
+                    <th className="p-4 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                   {loans.length === 0 ? (
+                     <tr><td colSpan={4} className="p-8 text-center text-slate-500">No loan history found.</td></tr>
+                   ) : loans.map(ln => (
+                     <tr key={ln.id} className="hover:bg-slate-800/30 transition-colors">
+                        <td className="p-4 text-slate-300 whitespace-nowrap">{format(new Date(ln.disbursed_date || ln.createdAt), "MMM dd, yyyy")}</td>
+                        <td className="p-4 text-slate-300">${parseFloat(ln.principal_amount || 0).toLocaleString()}</td>
+                        <td className="p-4 text-amber-400 font-medium">${parseFloat(ln.remaining_balance || 0).toLocaleString()}</td>
+                        <td className="p-4"><span className={`text-xs px-2 py-1 rounded font-medium ${ln.status === 'Paid Off' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>{ln.status}</span></td>
+                     </tr>
+                   ))}
+                </tbody>
+              </table>
+              {loansMeta?.pagination?.pageCount > 1 && (
+                 <div className="p-4 border-t border-slate-800 flex justify-between items-center">
+                    <button disabled={loanPage === 1} onClick={() => setLoanPage(p => p - 1)} className="text-sm text-slate-400 hover:text-white disabled:opacity-50">Previous</button>
+                    <span className="text-sm text-slate-500">Page {loanPage} of {loansMeta.pagination.pageCount}</span>
+                    <button disabled={loanPage === loansMeta.pagination.pageCount} onClick={() => setLoanPage(p => p + 1)} className="text-sm text-slate-400 hover:text-white disabled:opacity-50">Next</button>
+                 </div>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-white">Payroll History</h2>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
+                    <th className="p-4 font-medium">Pay Period</th>
+                    <th className="p-4 font-medium">Batch Status</th>
+                    <th className="p-4 font-medium text-right">Net Pay</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                   {payrolls.length === 0 ? (
+                     <tr><td colSpan={3} className="p-8 text-center text-slate-500">No payroll history found.</td></tr>
+                   ) : payrolls.map(pr => (
+                     <tr key={pr.id} className="hover:bg-slate-800/30 transition-colors">
+                        <td className="p-4 text-slate-300">
+                          {format(new Date(pr.pay_period_start), "MMM dd")} - {format(new Date(pr.pay_period_end), "MMM dd, yyyy")}
+                        </td>
+                        <td className="p-4 text-slate-400 capitalize">{pr.batch_status}</td>
+                        <td className="p-4 text-indigo-400 font-bold text-right">${parseFloat(pr.amount_to_transfer || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                     </tr>
+                   ))}
+                </tbody>
+              </table>
+              {payrollsMeta?.pagination?.pageCount > 1 && (
+                 <div className="p-4 border-t border-slate-800 flex justify-between items-center">
+                    <button disabled={payrollPage === 1} onClick={() => setPayrollPage(p => p - 1)} className="text-sm text-slate-400 hover:text-white disabled:opacity-50">Previous</button>
+                    <span className="text-sm text-slate-500">Page {payrollPage} of {payrollsMeta.pagination.pageCount}</span>
+                    <button disabled={payrollPage === payrollsMeta.pagination.pageCount} onClick={() => setPayrollPage(p => p + 1)} className="text-sm text-slate-400 hover:text-white disabled:opacity-50">Next</button>
+                 </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
