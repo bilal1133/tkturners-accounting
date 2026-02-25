@@ -6,6 +6,7 @@ import { ContactsPage } from "./pages/Contacts";
 import { ContactDetailsPage } from "./pages/ContactDetails";
 import { ProjectDetailsPage } from "./pages/ProjectDetails";
 import { PayrollPage } from "./pages/Payroll";
+import { GeneratePayrollPage } from "./pages/GeneratePayroll";
 import { AccountsPage } from "./pages/Accounts";
 import { AccountDetailsPage } from "./pages/AccountDetails";
 import { LoginPage } from "./pages/Login";
@@ -137,6 +138,10 @@ function App() {
                     <Route
                       path="/projects/:id"
                       element={<ProjectDetailsPage />}
+                    />
+                    <Route
+                      path="/payrolls/generate"
+                      element={<GeneratePayrollPage />}
                     />
                     <Route path="/payroll" element={<PayrollPage />} />
                   </Routes>

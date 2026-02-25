@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { Banknote, CreditCard, Plus, CheckCircle, Clock } from "lucide-react";
 import { format } from "date-fns";
-import { RunPayrollModal } from "../components/RunPayrollModal";
 import { DisburseLoanModal } from "../components/DisburseLoanModal";
 
 export const PayrollPage = () => {
+  const navigate = useNavigate();
   const [payrolls, setPayrolls] = useState<any[]>([]);
   const [loans, setLoans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [isPayrollModalOpen, setPayrollModalOpen] = useState(false);
   const [isLoanModalOpen, setLoanModalOpen] = useState(false);
 
   useEffect(() => {
@@ -56,13 +56,13 @@ export const PayrollPage = () => {
           <div className="p-4 border-b border-slate-800 flex justify-between items-center">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Banknote size={18} className="text-blue-400" />
-              Recent Payslips
+              Recent Payroll Batches
             </h2>
             <button
-              onClick={() => setPayrollModalOpen(true)}
+              onClick={() => navigate("/payrolls/generate")}
               className="text-sm bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-md flex items-center gap-1 font-medium text-white transition-colors"
             >
-              <Plus size={16} /> Run Payroll
+              <Plus size={16} /> Generate Batch
             </button>
           </div>
           <div className="p-4 flex-1">
@@ -221,12 +221,6 @@ export const PayrollPage = () => {
           </div>
         </div>
       </div>
-
-      <RunPayrollModal
-        isOpen={isPayrollModalOpen}
-        onClose={() => setPayrollModalOpen(false)}
-        onSuccess={() => loadData()}
-      />
 
       <DisburseLoanModal
         isOpen={isLoanModalOpen}
