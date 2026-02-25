@@ -14,7 +14,7 @@ const contactSchema = z.object({
   position: z.string().optional().or(z.literal("")),
   cnic: z
     .string()
-    .max(12, "CNIC must be at most 12 digits")
+    .max(13, "CNIC must be at most 13 digits")
     .optional()
     .or(z.literal("")),
   joining_date: z.string().optional().or(z.literal("")),
@@ -81,7 +81,7 @@ export const AddContactModal = ({
             __component: "contact-type.employee",
             salary: data.salary ? parseFloat(data.salary) : null,
             position: data.position,
-            cnic: data.cnic ? parseInt(data.cnic) : null,
+            cnic: data.cnic ? data.cnic : null,
             joining_date: data.joining_date || null,
             fuel_allowance: data.fuel_allowance
               ? parseFloat(data.fuel_allowance)
@@ -262,7 +262,7 @@ export const AddContactModal = ({
                   <input
                     type="number"
                     {...register("cnic")}
-                    placeholder="12-digit CNIC"
+                    placeholder="13-digit CNIC"
                     className={`w-full bg-slate-800 border ${errors.cnic ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
                   {errors.cnic && (

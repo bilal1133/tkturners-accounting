@@ -18,9 +18,7 @@
       "type": "string"
     },
     "cnic": {
-      "type": "integer",
-      "min": 12,
-      "max": 12
+      "type": "biginteger"
     },
     "joining_date": {
       "type": "date"
@@ -40,22 +38,12 @@
     "profile_picture": {
       "type": "media",
       "multiple": false,
-      "allowedTypes": [
-        "images",
-        "files",
-        "videos",
-        "audios"
-      ]
+      "allowedTypes": ["images", "files", "videos", "audios"]
     },
     "other_documents": {
       "type": "media",
       "multiple": true,
-      "allowedTypes": [
-        "images",
-        "files",
-        "videos",
-        "audios"
-      ]
+      "allowedTypes": ["images", "files", "videos", "audios"]
     },
     "loans": {
       "type": "relation",
