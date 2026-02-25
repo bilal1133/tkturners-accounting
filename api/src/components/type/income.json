@@ -1,0 +1,23 @@
+{
+  "collectionName": "components_type_incomes",
+  "info": {
+    "displayName": "income"
+  },
+  "options": {},
+  "attributes": {
+    "amount": {
+      "type": "decimal"
+    },
+    "currency": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::currency.currency"
+    },
+    "account": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::account.account"
+    }
+  },
+  "config": {}
+}

@@ -1,0 +1,66 @@
+{
+  "kind": "collectionType",
+  "collectionName": "transactions",
+  "info": {
+    "singularName": "transaction",
+    "pluralName": "transactions",
+    "displayName": "Transaction"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "date_time": {
+      "type": "datetime",
+      "required": true
+    },
+    "contact": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::contact.contact",
+      "inversedBy": "transactions"
+    },
+    "note": {
+      "type": "string"
+    },
+    "payment_type": {
+      "type": "enumeration",
+      "enum": [
+        "Cash",
+        "Debit Card",
+        "Credit Card",
+        "Transfer",
+        "Voucher",
+        "Mobile Payment"
+      ]
+    },
+    "type": {
+      "type": "dynamiczone",
+      "components": [
+        "type.expense",
+        "type.income",
+        "type.transfer"
+      ],
+      "required": true,
+      "max": 1
+    },
+    "category": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::category.category"
+    },
+    "project": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::project.project",
+      "inversedBy": "transactions"
+    },
+    "loan_disbursement": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::loan.loan",
+      "mappedBy": "disbursement_transaction"
+    }
+  }
+}

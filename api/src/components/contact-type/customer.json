@@ -1,0 +1,19 @@
+{
+  "collectionName": "components_contact_type_customers",
+  "info": {
+    "displayName": "customer"
+  },
+  "options": {},
+  "attributes": {
+    "company_name": {
+      "type": "string"
+    },
+    "company_vat": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    }
+  },
+  "config": {}
+}

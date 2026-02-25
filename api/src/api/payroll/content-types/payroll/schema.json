@@ -1,0 +1,35 @@
+{
+  "kind": "collectionType",
+  "collectionName": "payrolls",
+  "info": {
+    "singularName": "payroll",
+    "pluralName": "payrolls",
+    "displayName": "Payroll"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "pay_period_start": {
+      "type": "date",
+      "required": true
+    },
+    "pay_period_end": {
+      "type": "date",
+      "required": true
+    },
+    "employee_details": {
+      "type": "component",
+      "component": "employee.employee",
+      "repeatable": true
+    },
+    "payroll_status": {
+      "type": "enumeration",
+      "enum": [
+        "draft",
+        "processed"
+      ]
+    }
+  }
+}

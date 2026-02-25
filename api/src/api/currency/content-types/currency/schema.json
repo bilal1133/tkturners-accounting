@@ -1,0 +1,28 @@
+{
+  "kind": "collectionType",
+  "collectionName": "currencies",
+  "info": {
+    "singularName": "currency",
+    "pluralName": "currencies",
+    "displayName": "Currency"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "Name": {
+      "type": "string",
+      "required": true
+    },
+    "Symbol": {
+      "type": "string"
+    },
+    "accounts": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::account.account",
+      "mappedBy": "currency"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "collectionName": "components_contact_type_vendors",
+  "info": {
+    "displayName": "vendor"
+  },
+  "options": {},
+  "attributes": {
+    "description": {
+      "type": "string"
+    }
+  },
+  "config": {}
+}

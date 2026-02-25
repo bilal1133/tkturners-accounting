@@ -1,0 +1,67 @@
+{
+  "collectionName": "components_contact_type_employees",
+  "info": {
+    "displayName": "employee"
+  },
+  "options": {},
+  "attributes": {
+    "salary": {
+      "type": "decimal"
+    },
+    "position": {
+      "type": "string"
+    },
+    "birth_day": {
+      "type": "date"
+    },
+    "address": {
+      "type": "string"
+    },
+    "cnic": {
+      "type": "integer",
+      "min": 12,
+      "max": 12
+    },
+    "joining_date": {
+      "type": "date"
+    },
+    "bank_account": {
+      "type": "string"
+    },
+    "fuel_allowance": {
+      "type": "decimal"
+    },
+    "rental_allowance": {
+      "type": "decimal"
+    },
+    "gym_allowance": {
+      "type": "decimal"
+    },
+    "profile_picture": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
+    },
+    "other_documents": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
+    },
+    "loans": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::loan.loan"
+    }
+  },
+  "config": {}
+}

@@ -1,0 +1,59 @@
+{
+  "collectionName": "components_employee_employees",
+  "info": {
+    "displayName": "employee"
+  },
+  "options": {},
+  "attributes": {
+    "contact": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::contact.contact"
+    },
+    "overtime_amount": {
+      "type": "decimal"
+    },
+    "loan_amount_to_deduct": {
+      "type": "decimal"
+    },
+    "fuel_allowance": {
+      "type": "decimal"
+    },
+    "gym_allowance": {
+      "type": "decimal"
+    },
+    "rental_allowance": {
+      "type": "decimal"
+    },
+    "amount_to_transfer": {
+      "type": "decimal"
+    },
+    "payroll_status": {
+      "type": "enumeration",
+      "enum": [
+        "draft",
+        "waiting_for_approval",
+        "sent"
+      ]
+    },
+    "transaction": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::transaction.transaction"
+    },
+    "loan_ref": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::loan.loan"
+    },
+    "bonus": {
+      "type": "decimal"
+    },
+    "payee_account": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::account.account"
+    }
+  },
+  "config": {}
+}

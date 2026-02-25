@@ -1,0 +1,28 @@
+{
+  "collectionName": "components_type_transfers",
+  "info": {
+    "displayName": "transfer"
+  },
+  "options": {},
+  "attributes": {
+    "from_account": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::account.account"
+    },
+    "to_account": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::account.account"
+    },
+    "from_amount": {
+      "type": "decimal",
+      "required": true
+    },
+    "to_amount": {
+      "type": "decimal",
+      "required": true
+    }
+  },
+  "config": {}
+}
