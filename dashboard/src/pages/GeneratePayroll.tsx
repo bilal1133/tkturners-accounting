@@ -8,7 +8,6 @@ export const GeneratePayrollPage = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [employees, setEmployees] = useState<any[]>([]);
-  const [loans, setLoans] = useState<any[]>([]);
 
   // Period state
   const [startDate, setStartDate] = useState("");
@@ -65,7 +64,6 @@ export const GeneratePayrollPage = () => {
       });
 
       setEmployees(fetchedEmployees);
-      setLoans(fetchedLoans);
       setEntries(initialEntries);
     } catch (error) {
       console.error("Failed to load generic payroll data", error);

@@ -10,8 +10,10 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   RefreshCw,
+  Edit,
 } from "lucide-react";
 import { format } from "date-fns";
+import { EditContactModal } from "../components/EditContactModal";
 
 export const ContactDetailsPage = () => {
   const { id } = useParams();
@@ -28,6 +30,7 @@ export const ContactDetailsPage = () => {
   const [loanPage, setLoanPage] = useState(1);
 
   const [loading, setLoading] = useState(true);
+  const [isEditModalOpen, setEditModalOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -129,20 +132,29 @@ export const ContactDetailsPage = () => {
 
   return (
     <div className="space-y-8 text-slate-200">
-      <div className="flex items-center gap-4">
-        <Link
-          to="/contacts"
-          className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400"
-        >
-          <ArrowLeft size={20} />
-        </Link>
-        <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <User className="text-indigo-500" />
-            {contact.name}
-          </h1>
-          <p className="text-slate-400 mt-1">{contactTypeLabel} Profile</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Link
+            to="/contacts"
+            className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400"
+          >
+            <ArrowLeft size={20} />
+          </Link>
+          <div>
+            <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+              <User className="text-indigo-500" />
+              {contact.name}
+            </h1>
+            <p className="text-slate-400 mt-1">{contactTypeLabel} Profile</p>
+          </div>
         </div>
+
+        <button
+          onClick={() => setEditModalOpen(true)}
+          className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-slate-700 hover:border-slate-600"
+        >
+          <Edit size={16} /> Edit Contact
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -510,6 +522,19 @@ export const ContactDetailsPage = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {isEditModalOpen && (
+        <EditContactModal
+          isOpen={isEditModalOpen}
+          onClose={() => setEditModalOpen(false)}
+          onSuccess={() => {
+            setEditModalOpen(false);
+            loadData();
+          }}
+          contactId={contact.documentId}
+          contactData={contact}
+        />
       )}
     </div>
   );
