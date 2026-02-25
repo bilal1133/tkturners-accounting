@@ -1,7 +1,30 @@
 import { useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
 import { api } from "../lib/api";
 import { X } from "lucide-react";
+
+const contactSchema = z.object({
+  type: z.enum(["Employee", "Customer", "Vendor"]),
+  name: z.string().min(1, "Name is required"),
+  email: z.string().email("Invalid email format").optional().or(z.literal("")),
+  phone: z.string().optional().or(z.literal("")),
+  salary: z.string().optional().or(z.literal("")),
+  position: z.string().optional().or(z.literal("")),
+  cnic: z
+    .string()
+    .max(12, "CNIC must be at most 12 digits")
+    .optional()
+    .or(z.literal("")),
+  joining_date: z.string().optional().or(z.literal("")),
+  fuel_allowance: z.string().optional().or(z.literal("")),
+  rental_allowance: z.string().optional().or(z.literal("")),
+  gym_allowance: z.string().optional().or(z.literal("")),
+  company_name: z.string().optional().or(z.literal("")),
+  company_vat: z.string().optional().or(z.literal("")),
+  description: z.string().optional().or(z.literal("")),
+});
 
 type AddContactModalProps = {
   isOpen: boolean;
@@ -14,7 +37,15 @@ export const AddContactModal = ({
   onClose,
   onSuccess,
 }: AddContactModalProps) => {
-  const { register, handleSubmit, reset, control } = useForm({
+  const {
+    register,
+    handleSubmit,
+    reset,
+    control,
+    setError,
+    formState: { errors },
+  } = useForm({
+    resolver: zodResolver(contactSchema),
     defaultValues: {
       type: "Employee",
       name: "",
@@ -93,9 +124,25 @@ export const AddContactModal = ({
       reset();
       onSuccess();
       onClose();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Failed to save contact.");
+      const strapiErrors = e.response?.data?.error?.details?.errors;
+      if (strapiErrors && Array.isArray(strapiErrors)) {
+        strapiErrors.forEach((err: any) => {
+          // Extract the last part of the path (e.g., "cnic" from ["contact_type", "0", "cnic"])
+          const fieldPath = err.path ? err.path[err.path.length - 1] : null;
+          if (fieldPath) {
+            setError(fieldPath as any, {
+              type: "server",
+              message: err.message,
+            });
+          } else {
+            alert(err.message);
+          }
+        });
+      } else {
+        alert(e.response?.data?.error?.message || "Failed to save contact.");
+      }
     } finally {
       setLoading(false);
     }
@@ -123,10 +170,14 @@ export const AddContactModal = ({
                 Name
               </label>
               <input
-                required
                 {...register("name")}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                className={`w-full bg-slate-800 border ${errors.name ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
               />
+              {errors.name && (
+                <p className="text-red-400 text-xs mt-1">
+                  {errors.name.message as string}
+                </p>
+              )}
             </div>
 
             <div className="col-span-2 sm:col-span-1">
@@ -134,14 +185,18 @@ export const AddContactModal = ({
                 Contact Category
               </label>
               <select
-                required
                 {...register("type")}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                className={`w-full bg-slate-800 border ${errors.type ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
               >
                 <option value="Customer">Customer</option>
                 <option value="Vendor">Vendor</option>
                 <option value="Employee">Employee</option>
               </select>
+              {errors.type && (
+                <p className="text-red-400 text-xs mt-1">
+                  {errors.type.message as string}
+                </p>
+              )}
             </div>
           </div>
 
@@ -153,8 +208,13 @@ export const AddContactModal = ({
               <input
                 type="email"
                 {...register("email")}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                className={`w-full bg-slate-800 border ${errors.email ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
               />
+              {errors.email && (
+                <p className="text-red-400 text-xs mt-1">
+                  {errors.email.message as string}
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -163,8 +223,13 @@ export const AddContactModal = ({
               <input
                 type="tel"
                 {...register("phone")}
-                className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                className={`w-full bg-slate-800 border ${errors.phone ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
               />
+              {errors.phone && (
+                <p className="text-red-400 text-xs mt-1">
+                  {errors.phone.message as string}
+                </p>
+              )}
             </div>
           </div>
 
@@ -182,8 +247,13 @@ export const AddContactModal = ({
                   <input
                     {...register("position")}
                     placeholder="e.g. Technician"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.position ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.position && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.position.message as string}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -193,8 +263,13 @@ export const AddContactModal = ({
                     type="number"
                     {...register("cnic")}
                     placeholder="12-digit CNIC"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.cnic ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.cnic && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.cnic.message as string}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -205,8 +280,13 @@ export const AddContactModal = ({
                     step="0.01"
                     {...register("salary")}
                     placeholder="0.00"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.salary ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.salary && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.salary.message as string}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -215,8 +295,13 @@ export const AddContactModal = ({
                   <input
                     type="date"
                     {...register("joining_date")}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.joining_date ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.joining_date && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.joining_date.message as string}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -227,8 +312,13 @@ export const AddContactModal = ({
                     step="0.01"
                     {...register("fuel_allowance")}
                     placeholder="0.00"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.fuel_allowance ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.fuel_allowance && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.fuel_allowance.message as string}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -239,8 +329,13 @@ export const AddContactModal = ({
                     step="0.01"
                     {...register("rental_allowance")}
                     placeholder="0.00"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.rental_allowance ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.rental_allowance && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.rental_allowance.message as string}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -251,8 +346,13 @@ export const AddContactModal = ({
                     step="0.01"
                     {...register("gym_allowance")}
                     placeholder="0.00"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.gym_allowance ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.gym_allowance && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.gym_allowance.message as string}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -270,8 +370,13 @@ export const AddContactModal = ({
                   </label>
                   <input
                     {...register("company_name")}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.company_name ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.company_name && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.company_name.message as string}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -279,8 +384,13 @@ export const AddContactModal = ({
                   </label>
                   <input
                     {...register("company_vat")}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.company_vat ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.company_vat && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.company_vat.message as string}
+                    </p>
+                  )}
                 </div>
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-slate-400 mb-1">
@@ -289,8 +399,13 @@ export const AddContactModal = ({
                   <textarea
                     {...register("description")}
                     rows={3}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    className={`w-full bg-slate-800 border ${errors.description ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                   />
+                  {errors.description && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.description.message as string}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -308,8 +423,13 @@ export const AddContactModal = ({
                 <textarea
                   {...register("description")}
                   rows={4}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  className={`w-full bg-slate-800 border ${errors.description ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
                 />
+                {errors.description && (
+                  <p className="text-red-400 text-xs mt-1">
+                    {errors.description.message as string}
+                  </p>
+                )}
               </div>
             </div>
           )}
