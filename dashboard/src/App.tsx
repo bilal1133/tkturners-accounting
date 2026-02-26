@@ -1,17 +1,21 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
-import { Home, Wallet, Users, Banknote, Landmark } from "lucide-react";
+import { Home, Wallet, Users, Banknote, Landmark, Coins } from "lucide-react";
 import { LedgerPage } from "./pages/Ledger";
 import { ContactsPage } from "./pages/Contacts";
 import { ContactDetailsPage } from "./pages/ContactDetails";
 import { ProjectDetailsPage } from "./pages/ProjectDetails";
 import { PayrollPage } from "./pages/Payroll";
 import { GeneratePayrollPage } from "./pages/GeneratePayroll";
+import { PayrollBatchDetailsPage } from "./pages/PayrollBatchDetails";
 import { AccountsPage } from "./pages/Accounts";
 import { AccountDetailsPage } from "./pages/AccountDetails";
 import { LoginPage } from "./pages/Login";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { LogOut } from "lucide-react";
+import { TransactionDetailsPage } from "./pages/TransactionDetails";
+import { CurrenciesPage } from "./pages/Currencies";
+import { DashboardPage } from "./pages/Dashboard";
 
 const Sidebar = () => {
   const { logout, user } = useAuth();
@@ -37,6 +41,13 @@ const Sidebar = () => {
         >
           <Landmark size={20} className="text-slate-400" />
           <span className="font-medium text-slate-200">Accounts & Books</span>
+        </Link>
+        <Link
+          to="/currencies"
+          className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-800 transition-colors"
+        >
+          <Coins size={20} className="text-slate-400" />
+          <span className="font-medium text-slate-200">Currencies</span>
         </Link>
         <Link
           to="/ledger"
@@ -90,9 +101,6 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
-// Placeholder pages
-const DashboardPage = () => <div className="text-3xl font-bold">Dashboard</div>;
-
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { jwt, isLoading } = useAuth();
 
@@ -129,7 +137,12 @@ function App() {
                       path="/accounts/:id"
                       element={<AccountDetailsPage />}
                     />
+                    <Route path="/currencies" element={<CurrenciesPage />} />
                     <Route path="/ledger" element={<LedgerPage />} />
+                    <Route
+                      path="/ledger/:id"
+                      element={<TransactionDetailsPage />}
+                    />
                     <Route path="/contacts" element={<ContactsPage />} />
                     <Route
                       path="/contacts/:id"
@@ -142,6 +155,10 @@ function App() {
                     <Route
                       path="/payrolls/generate"
                       element={<GeneratePayrollPage />}
+                    />
+                    <Route
+                      path="/payrolls/:id"
+                      element={<PayrollBatchDetailsPage />}
                     />
                     <Route path="/payroll" element={<PayrollPage />} />
                   </Routes>

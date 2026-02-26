@@ -14,7 +14,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
     },
-    "x-generation-date": "2026-02-25T18:14:58.162Z"
+    "x-generation-date": "2026-02-26T21:53:14.085Z"
   },
   "x-strapi-config": {
     "plugins": [
@@ -5671,11 +5671,17 @@
               "documentId": {
                 "type": "string"
               },
-              "Name": {
+              "code": {
                 "type": "string"
               },
-              "Symbol": {
+              "name": {
                 "type": "string"
+              },
+              "symbol": {
+                "type": "string"
+              },
+              "is_active": {
+                "type": "boolean"
               },
               "accounts": {
                 "type": "array",
@@ -7882,6 +7888,24 @@
                     }
                   }
                 },
+                "loan_repayment": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "documentId": {
+                      "type": "string"
+                    }
+                  }
+                },
                 "createdAt": {
                   "type": "string",
                   "format": "date-time"
@@ -8121,7 +8145,9 @@
             "type": "string"
           },
           "cnic": {
-            "type": "integer"
+            "type": "string",
+            "pattern": "^\\d*$",
+            "example": "123456789"
           },
           "joining_date": {
             "type": "string",
@@ -8804,6 +8830,37 @@
                 }
               }
             }
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "department": {
+            "type": "string",
+            "enum": [
+              "Management",
+              "Engineering",
+              "HouseKeeping",
+              "Marketing",
+              "Bussiness Development"
+            ]
+          },
+          "currency": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "documentId": {
+                "type": "string"
+              }
+            }
           }
         }
       },
@@ -9056,15 +9113,23 @@
         "properties": {
           "data": {
             "required": [
-              "Name"
+              "code",
+              "name",
+              "symbol"
             ],
             "type": "object",
             "properties": {
-              "Name": {
+              "code": {
                 "type": "string"
               },
-              "Symbol": {
+              "name": {
                 "type": "string"
+              },
+              "symbol": {
+                "type": "string"
+              },
+              "is_active": {
+                "type": "boolean"
               },
               "accounts": {
                 "type": "array",
@@ -9139,7 +9204,9 @@
       "Currency": {
         "type": "object",
         "required": [
-          "Name"
+          "code",
+          "name",
+          "symbol"
         ],
         "properties": {
           "id": {
@@ -9155,11 +9222,17 @@
           "documentId": {
             "type": "string"
           },
-          "Name": {
+          "code": {
             "type": "string"
           },
-          "Symbol": {
+          "name": {
             "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
           },
           "accounts": {
             "type": "array",
@@ -9202,11 +9275,17 @@
                     "documentId": {
                       "type": "string"
                     },
-                    "Name": {
+                    "code": {
                       "type": "string"
                     },
-                    "Symbol": {
+                    "name": {
                       "type": "string"
+                    },
+                    "symbol": {
+                      "type": "string"
+                    },
+                    "is_active": {
+                      "type": "boolean"
                     },
                     "accounts": {
                       "type": "array",
@@ -10775,6 +10854,24 @@
                   }
                 }
               },
+              "loan_repayment": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "documentId": {
+                    "type": "string"
+                  }
+                }
+              },
               "createdAt": {
                 "type": "string",
                 "format": "date-time"
@@ -10943,7 +11040,8 @@
           "data": {
             "required": [
               "pay_period_start",
-              "pay_period_end"
+              "pay_period_end",
+              "pay_date"
             ],
             "type": "object",
             "properties": {
@@ -10952,6 +11050,10 @@
                 "format": "date"
               },
               "pay_period_end": {
+                "type": "string",
+                "format": "date"
+              },
+              "pay_date": {
                 "type": "string",
                 "format": "date"
               },
@@ -10967,6 +11069,9 @@
                   "draft",
                   "processed"
                 ]
+              },
+              "ledger_synced": {
+                "type": "boolean"
               },
               "locale": {
                 "type": "string"
@@ -11028,7 +11133,8 @@
         "type": "object",
         "required": [
           "pay_period_start",
-          "pay_period_end"
+          "pay_period_end",
+          "pay_date"
         ],
         "properties": {
           "id": {
@@ -11052,6 +11158,10 @@
             "type": "string",
             "format": "date"
           },
+          "pay_date": {
+            "type": "string",
+            "format": "date"
+          },
           "employee_details": {
             "type": "array",
             "items": {
@@ -11064,6 +11174,9 @@
               "draft",
               "processed"
             ]
+          },
+          "ledger_synced": {
+            "type": "boolean"
           },
           "createdAt": {
             "type": "string",
@@ -11142,6 +11255,10 @@
                   "type": "string",
                   "format": "date"
                 },
+                "pay_date": {
+                  "type": "string",
+                  "format": "date"
+                },
                 "employee_details": {
                   "type": "array",
                   "items": {
@@ -11154,6 +11271,9 @@
                     "draft",
                     "processed"
                   ]
+                },
+                "ledger_synced": {
+                  "type": "boolean"
                 },
                 "createdAt": {
                   "type": "string",
@@ -11256,6 +11376,9 @@
               }
             ]
           },
+          "employee_name": {
+            "type": "string"
+          },
           "contact": {
             "type": "object",
             "properties": {
@@ -11294,7 +11417,27 @@
             "type": "number",
             "format": "float"
           },
-          "amount_to_transfer": {
+          "bonus": {
+            "type": "number",
+            "format": "float"
+          },
+          "gross_pay": {
+            "type": "number",
+            "format": "float"
+          },
+          "net_pay": {
+            "type": "number",
+            "format": "float"
+          },
+          "converted_gross_pay": {
+            "type": "number",
+            "format": "float"
+          },
+          "converted_loan_deduction": {
+            "type": "number",
+            "format": "float"
+          },
+          "converted_net_pay": {
             "type": "number",
             "format": "float"
           },
@@ -11302,11 +11445,28 @@
             "type": "string",
             "enum": [
               "draft",
-              "waiting_for_approval",
-              "sent"
+              "processed"
             ]
           },
-          "transaction": {
+          "salary_transaction": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "documentId": {
+                "type": "string"
+              }
+            }
+          },
+          "loan_repayment_transaction": {
             "type": "object",
             "properties": {
               "id": {
@@ -11341,10 +11501,6 @@
                 "type": "string"
               }
             }
-          },
-          "bonus": {
-            "type": "number",
-            "format": "float"
           },
           "payee_account": {
             "type": "object",
@@ -11979,6 +12135,24 @@
                         }
                       }
                     },
+                    "loan_repayment": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        },
+                        "documentId": {
+                          "type": "string"
+                        }
+                      }
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -12368,6 +12542,17 @@
                 "example": "string or id"
               },
               "loan_disbursement": {
+                "oneOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "example": "string or id"
+              },
+              "loan_repayment": {
                 "oneOf": [
                   {
                     "type": "integer"
@@ -12927,6 +13112,24 @@
                         }
                       }
                     },
+                    "loan_repayment": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        },
+                        "documentId": {
+                          "type": "string"
+                        }
+                      }
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -13196,6 +13399,24 @@
             }
           },
           "loan_disbursement": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "documentId": {
+                "type": "string"
+              }
+            }
+          },
+          "loan_repayment": {
             "type": "object",
             "properties": {
               "id": {

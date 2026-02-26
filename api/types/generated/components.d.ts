@@ -18,17 +18,21 @@ export interface ContactTypeEmployee extends Struct.ComponentSchema {
     displayName: 'employee';
   };
   attributes: {
+    active: Schema.Attribute.Boolean;
     address: Schema.Attribute.String;
     bank_account: Schema.Attribute.String;
     birth_day: Schema.Attribute.Date;
-    cnic: Schema.Attribute.Integer &
-      Schema.Attribute.SetMinMax<
-        {
-          max: 12;
-          min: 12;
-        },
-        number
-      >;
+    cnic: Schema.Attribute.BigInteger;
+    currency: Schema.Attribute.Relation<'manyToOne', 'api::currency.currency'>;
+    department: Schema.Attribute.Enumeration<
+      [
+        'Management',
+        'Engineering',
+        'HouseKeeping',
+        'Marketing',
+        'Bussiness Development',
+      ]
+    >;
     fuel_allowance: Schema.Attribute.Decimal;
     gym_allowance: Schema.Attribute.Decimal;
     joining_date: Schema.Attribute.Date;
@@ -62,23 +66,30 @@ export interface EmployeeEmployee extends Struct.ComponentSchema {
     displayName: 'employee';
   };
   attributes: {
-    amount_to_transfer: Schema.Attribute.Decimal;
     bonus: Schema.Attribute.Decimal;
-    contact: Schema.Attribute.Relation<'oneToOne', 'api::contact.contact'>;
+    contact: Schema.Attribute.Relation<'manyToOne', 'api::contact.contact'>;
+    converted_gross_pay: Schema.Attribute.Decimal;
+    converted_loan_deduction: Schema.Attribute.Decimal;
+    converted_net_pay: Schema.Attribute.Decimal;
+    employee_name: Schema.Attribute.String;
     fuel_allowance: Schema.Attribute.Decimal;
+    gross_pay: Schema.Attribute.Decimal;
     gym_allowance: Schema.Attribute.Decimal;
     loan_amount_to_deduct: Schema.Attribute.Decimal;
-    loan_ref: Schema.Attribute.Relation<'oneToOne', 'api::loan.loan'>;
+    loan_ref: Schema.Attribute.Relation<'manyToOne', 'api::loan.loan'>;
+    loan_repayment_transaction: Schema.Attribute.Relation<
+      'oneToOne',
+      'api::transaction.transaction'
+    >;
+    net_pay: Schema.Attribute.Decimal;
     overtime_amount: Schema.Attribute.Decimal;
     payee_account: Schema.Attribute.Relation<
-      'oneToOne',
+      'manyToOne',
       'api::account.account'
     >;
-    payroll_status: Schema.Attribute.Enumeration<
-      ['draft', 'waiting_for_approval', 'sent']
-    >;
+    payroll_status: Schema.Attribute.Enumeration<['draft', 'processed']>;
     rental_allowance: Schema.Attribute.Decimal;
-    transaction: Schema.Attribute.Relation<
+    salary_transaction: Schema.Attribute.Relation<
       'oneToOne',
       'api::transaction.transaction'
     >;
@@ -93,7 +104,7 @@ export interface TypeExpense extends Struct.ComponentSchema {
   attributes: {
     account: Schema.Attribute.Relation<'oneToOne', 'api::account.account'>;
     amount: Schema.Attribute.Decimal;
-    currency: Schema.Attribute.Relation<'oneToOne', 'api::currency.currency'>;
+    currency: Schema.Attribute.Relation<'manyToOne', 'api::currency.currency'>;
   };
 }
 
@@ -105,7 +116,7 @@ export interface TypeIncome extends Struct.ComponentSchema {
   attributes: {
     account: Schema.Attribute.Relation<'oneToOne', 'api::account.account'>;
     amount: Schema.Attribute.Decimal;
-    currency: Schema.Attribute.Relation<'oneToOne', 'api::currency.currency'>;
+    currency: Schema.Attribute.Relation<'manyToOne', 'api::currency.currency'>;
   };
 }
 

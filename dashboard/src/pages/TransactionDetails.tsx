@@ -14,6 +14,7 @@ import {
   Calendar,
 } from "lucide-react";
 import { format } from "date-fns";
+import { currencyName, currencySymbol } from "../lib/currency";
 
 export const TransactionDetailsPage = () => {
   const { id } = useParams();
@@ -52,7 +53,7 @@ export const TransactionDetailsPage = () => {
   const isExpense = comp.__component === "type.expense";
   const isTransfer = comp.__component === "type.transfer";
 
-  const symbol = comp.currency?.Symbol || comp.currency?.Name || "";
+  const symbol = currencySymbol(comp.currency) || currencyName(comp.currency);
   const amountToDisplay = isTransfer
     ? parseFloat(comp.from_amount)
     : parseFloat(comp.amount);

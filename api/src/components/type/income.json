@@ -10,7 +10,7 @@
     },
     "currency": {
       "type": "relation",
-      "relation": "oneToOne",
+      "relation": "manyToOne",
       "target": "api::currency.currency"
     },
     "account": {

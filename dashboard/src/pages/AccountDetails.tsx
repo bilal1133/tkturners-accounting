@@ -10,6 +10,7 @@ import {
   Landmark,
 } from "lucide-react";
 import { format } from "date-fns";
+import { currencyName, currencySymbol } from "../lib/currency";
 
 export const AccountDetailsPage = () => {
   const { id } = useParams();
@@ -61,7 +62,7 @@ export const AccountDetailsPage = () => {
   if (!account)
     return <div className="text-red-400 p-8">Account not found.</div>;
 
-  const symbol = account.currency?.Symbol || account.currency?.Name || "";
+  const symbol = currencySymbol(account.currency) || currencyName(account.currency);
   const initial = parseFloat(account.initial_amount) || 0;
 
   let currentBalance = initial;
@@ -122,7 +123,7 @@ export const AccountDetailsPage = () => {
             <div>
               Currency:{" "}
               <span className="text-slate-200">
-                {account.currency?.Name || "Unknown"}
+                {currencyName(account.currency) || "Unknown"}
               </span>
             </div>
           </div>

@@ -12,11 +12,19 @@ const pool = new Pool({
 (async () => {
   try {
     const hash = await bcrypt.hash("TestPassword123", 10);
-    // Find Authenticated Role
-    const roleRes = await pool.query(
-      "SELECT id FROM up_roles WHERE type = 'authenticated'",
+    // Prefer the finance-admin role after security hardening.
+    const financeRoleRes = await pool.query(
+      "SELECT id FROM up_roles WHERE type = 'finance-admin' LIMIT 1",
     );
-    const roleId = roleRes.rows[0].id;
+    const fallbackRoleRes = await pool.query(
+      "SELECT id FROM up_roles WHERE type = 'authenticated' LIMIT 1",
+    );
+    const roleId =
+      financeRoleRes.rows[0]?.id || fallbackRoleRes.rows[0]?.id || null;
+
+    if (!roleId) {
+      throw new Error("No valid user role found (finance-admin/authenticated).");
+    }
 
     await pool.query(
       "INSERT INTO up_users (username, email, provider, password, confirmed, blocked, role_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())",

@@ -3,30 +3,126 @@ import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { api } from "../lib/api";
+import { currencyLabel } from "../lib/currency";
 import { X } from "lucide-react";
 
-const contactSchema = z.object({
-  type: z.enum(["Employee", "Customer", "Vendor"]),
-  name: z.string().min(1, "Name is required"),
-  email: z.string().email("Invalid email format").optional().or(z.literal("")),
-  phone: z.string().optional().or(z.literal("")),
-  salary: z.string().optional().or(z.literal("")),
-  position: z.string().optional().or(z.literal("")),
-  cnic: z
+const optionalDateField = (label: string) =>
+  z
     .string()
-    .max(13, "CNIC must be at most 13 digits")
     .optional()
-    .or(z.literal("")),
-  joining_date: z.string().optional().or(z.literal("")),
-  active: z.boolean().default(true),
-  department: z.string().optional().or(z.literal("")),
-  fuel_allowance: z.string().optional().or(z.literal("")),
-  rental_allowance: z.string().optional().or(z.literal("")),
-  gym_allowance: z.string().optional().or(z.literal("")),
-  company_name: z.string().optional().or(z.literal("")),
-  company_vat: z.string().optional().or(z.literal("")),
-  description: z.string().optional().or(z.literal("")),
-});
+    .or(z.literal(""))
+    .refine(
+      (value) => !value || !Number.isNaN(new Date(value).getTime()),
+      `${label} is invalid`,
+    )
+    .refine(
+      (value) => !value || new Date(value) <= new Date(),
+      `${label} cannot be in the future`,
+    );
+
+const optionalNonNegativeNumber = (label: string) =>
+  z
+    .string()
+    .optional()
+    .or(z.literal(""))
+    .refine(
+      (value) =>
+        !value ||
+        (Number.isFinite(Number.parseFloat(value)) &&
+          Number.parseFloat(value) >= 0),
+      `${label} must be a non-negative number`,
+    );
+
+const contactSchema = z
+  .object({
+    type: z.enum(["Employee", "Customer", "Vendor"]),
+    name: z.string().trim().min(1, "Name is required"),
+    email: z.string().email("Invalid email format").optional().or(z.literal("")),
+    phone: z
+      .string()
+      .optional()
+      .or(z.literal(""))
+      .refine(
+        (value) => !value || /^[0-9+\-()\s]{7,20}$/.test(value),
+        "Phone must be 7-20 characters and contain only digits or + - ( )",
+      ),
+    salary: optionalNonNegativeNumber("Base Salary"),
+    position: z.string().optional().or(z.literal("")),
+    cnic: z
+      .string()
+      .optional()
+      .or(z.literal(""))
+      .refine(
+        (value) => !value || /^\d{13}$/.test(value),
+        "CNIC must be exactly 13 digits",
+      ),
+    birth_day: optionalDateField("Birth Date"),
+    joining_date: optionalDateField("Joining Date"),
+    address: z
+      .string()
+      .optional()
+      .or(z.literal(""))
+      .refine(
+        (value) => !value || value.trim().length <= 200,
+        "Address must be at most 200 characters",
+      ),
+    bank_account: z
+      .string()
+      .optional()
+      .or(z.literal(""))
+      .refine(
+        (value) => !value || /^[A-Za-z0-9\-\s]{6,34}$/.test(value),
+        "Bank account must be 6-34 characters (letters, numbers, spaces, -)",
+      ),
+    active: z.boolean().default(true),
+    department: z.string().optional().or(z.literal("")),
+    fuel_allowance: optionalNonNegativeNumber("Fuel Allowance"),
+    rental_allowance: optionalNonNegativeNumber("Rental Allowance"),
+    gym_allowance: optionalNonNegativeNumber("Gym Allowance"),
+    currency: z.string().optional().or(z.literal("")),
+    company_name: z.string().optional().or(z.literal("")),
+    company_vat: z.string().optional().or(z.literal("")),
+    description: z.string().optional().or(z.literal("")),
+  })
+  .superRefine((data, ctx) => {
+    if (data.birth_day && data.joining_date) {
+      const birth = new Date(data.birth_day);
+      const joining = new Date(data.joining_date);
+      if (joining < birth) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["joining_date"],
+          message: "Joining Date cannot be earlier than Birth Date",
+        });
+      }
+    }
+
+    if (data.type === "Employee") {
+      if (!data.position?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["position"],
+          message: "Job Position is required for employees",
+        });
+      }
+
+      if (!data.department?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["department"],
+          message: "Department is required for employees",
+        });
+      }
+    }
+
+    if (data.type === "Customer" && !data.company_name?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["company_name"],
+        message: "Company Name is required for customers",
+      });
+    }
+  });
 
 type EditContactModalProps = {
   isOpen: boolean;
@@ -49,6 +145,7 @@ export const EditContactModal = ({
     reset,
     control,
     setError,
+    setValue,
     formState: { errors },
   } = useForm({
     resolver: zodResolver(contactSchema),
@@ -61,12 +158,16 @@ export const EditContactModal = ({
       salary: "",
       position: "",
       cnic: "",
+      birth_day: "",
       joining_date: "",
+      address: "",
+      bank_account: "",
       active: true,
       department: "",
       fuel_allowance: "",
       rental_allowance: "",
       gym_allowance: "",
+      currency: "",
       // customer fields
       company_name: "",
       company_vat: "",
@@ -74,6 +175,38 @@ export const EditContactModal = ({
       description: "",
     },
   });
+
+  const [loading, setLoading] = useState(false);
+  const [currencies, setCurrencies] = useState<any[]>([]);
+  const selectedType = useWatch({ control, name: "type" });
+
+  useEffect(() => {
+    if (isOpen) {
+      api
+        .get("/currencies")
+        .then((res) => {
+          setCurrencies(res.data.data);
+        })
+        .catch(console.error);
+    }
+  }, [isOpen]);
+
+  // Re-apply currency after currencies list loads (fixes race condition where
+  // reset() runs before currencies are fetched, leaving the select blank)
+  useEffect(() => {
+    if (!isOpen || !contactData || currencies.length === 0) return;
+    const specificData =
+      contactData.contact_type && contactData.contact_type.length > 0
+        ? contactData.contact_type[0]
+        : {};
+    if (specificData.currency) {
+      const currencyId =
+        typeof specificData.currency === "object"
+          ? specificData.currency.id?.toString() || ""
+          : specificData.currency.toString();
+      if (currencyId) setValue("currency", currencyId);
+    }
+  }, [currencies, isOpen, contactData, setValue]);
 
   useEffect(() => {
     if (isOpen && contactData) {
@@ -100,7 +233,10 @@ export const EditContactModal = ({
         salary: specificData.salary ? specificData.salary.toString() : "",
         position: specificData.position || "",
         cnic: specificData.cnic ? specificData.cnic.toString() : "",
+        birth_day: specificData.birth_day || "",
         joining_date: specificData.joining_date || "",
+        address: specificData.address || "",
+        bank_account: specificData.bank_account || "",
         active: specificData.active ?? true,
         department: specificData.department || "",
         fuel_allowance: specificData.fuel_allowance
@@ -112,6 +248,11 @@ export const EditContactModal = ({
         gym_allowance: specificData.gym_allowance
           ? specificData.gym_allowance.toString()
           : "",
+        currency: specificData.currency
+          ? typeof specificData.currency === "object"
+            ? specificData.currency.id?.toString() || ""
+            : specificData.currency.toString()
+          : "",
         company_name: specificData.company_name || "",
         company_vat: specificData.company_vat || "",
         description: specificData.description || "",
@@ -119,22 +260,27 @@ export const EditContactModal = ({
     }
   }, [isOpen, contactData, reset]);
 
-  const [loading, setLoading] = useState(false);
-  const selectedType = useWatch({ control, name: "type" });
-
   const onSubmit = async (data: any) => {
     setLoading(true);
     try {
       let contact_type: any[] = [];
 
       if (data.type === "Employee") {
+        // Preserve existing loans from the contact data
+        const existingEmployee = contactData.contact_type?.find(
+          (c: any) => c.__component === "contact-type.employee",
+        );
+
         contact_type = [
           {
             __component: "contact-type.employee",
             salary: data.salary ? parseFloat(data.salary) : null,
             position: data.position,
             cnic: data.cnic ? data.cnic : null,
+            birth_day: data.birth_day || null,
             joining_date: data.joining_date || null,
+            address: data.address || null,
+            bank_account: data.bank_account || null,
             active: data.active,
             department: data.department || null,
             fuel_allowance: data.fuel_allowance
@@ -146,6 +292,12 @@ export const EditContactModal = ({
             gym_allowance: data.gym_allowance
               ? parseFloat(data.gym_allowance)
               : null,
+            currency: data.currency ? Number(data.currency) : null,
+            ...(existingEmployee?.loans && {
+              loans: {
+                set: existingEmployee.loans.map((l: any) => l.id || l),
+              },
+            }),
           },
         ];
       } else if (data.type === "Customer") {
@@ -179,7 +331,8 @@ export const EditContactModal = ({
       onSuccess();
       onClose();
     } catch (e: any) {
-      console.error(e);
+      console.error("Error updating contact:", e);
+      console.error("Response data:", e.response?.data);
       const strapiErrors = e.response?.data?.error?.details?.errors;
       if (strapiErrors && Array.isArray(strapiErrors)) {
         strapiErrors.forEach((err: any) => {
@@ -314,7 +467,8 @@ export const EditContactModal = ({
                     CNIC
                   </label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
                     {...register("cnic")}
                     placeholder="13-digit CNIC"
                     className={`w-full bg-slate-800 border ${errors.cnic ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
@@ -322,6 +476,21 @@ export const EditContactModal = ({
                   {errors.cnic && (
                     <p className="text-red-400 text-xs mt-1">
                       {errors.cnic.message as string}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">
+                    Birth Date
+                  </label>
+                  <input
+                    type="date"
+                    {...register("birth_day")}
+                    className={`w-full bg-slate-800 border ${errors.birth_day ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
+                  />
+                  {errors.birth_day && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.birth_day.message as string}
                     </p>
                   )}
                 </div>
@@ -339,6 +508,27 @@ export const EditContactModal = ({
                   {errors.salary && (
                     <p className="text-red-400 text-xs mt-1">
                       {errors.salary.message as string}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">
+                    Currency
+                  </label>
+                  <select
+                    {...register("currency")}
+                    className={`w-full bg-slate-800 border ${errors.currency ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
+                  >
+                    <option value="">System Default</option>
+                    {currencies.map((curr) => (
+                      <option key={curr.id} value={curr.id}>
+                        {currencyLabel(curr)}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.currency && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.currency.message as string}
                     </p>
                   )}
                 </div>
@@ -377,6 +567,38 @@ export const EditContactModal = ({
                   {errors.department && (
                     <p className="text-red-400 text-xs mt-1">
                       {errors.department.message as string}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">
+                    Bank Account
+                  </label>
+                  <input
+                    type="text"
+                    {...register("bank_account")}
+                    placeholder="e.g. PK12ABCD1234567890"
+                    className={`w-full bg-slate-800 border ${errors.bank_account ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
+                  />
+                  {errors.bank_account && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.bank_account.message as string}
+                    </p>
+                  )}
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-slate-400 mb-1">
+                    Address
+                  </label>
+                  <textarea
+                    {...register("address")}
+                    rows={2}
+                    placeholder="Current address"
+                    className={`w-full bg-slate-800 border ${errors.address ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
+                  />
+                  {errors.address && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.address.message as string}
                     </p>
                   )}
                 </div>

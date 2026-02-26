@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { api } from "../lib/api";
+import { currencyLabel } from "../lib/currency";
 import { X } from "lucide-react";
 
 type AddAccountModalProps = {
@@ -111,7 +112,7 @@ export const AddAccountModal = ({
                 <option value="">Select Currency</option>
                 {currencies.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.Symbol} - {c.Name}
+                    {currencyLabel(c)}
                   </option>
                 ))}
               </select>

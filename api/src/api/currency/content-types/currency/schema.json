@@ -11,12 +11,22 @@
   },
   "pluginOptions": {},
   "attributes": {
-    "Name": {
+    "code": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "name": {
       "type": "string",
       "required": true
     },
-    "Symbol": {
-      "type": "string"
+    "symbol": {
+      "type": "string",
+      "required": true
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
     },
     "accounts": {
       "type": "relation",

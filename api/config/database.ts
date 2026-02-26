@@ -3,6 +3,7 @@ import type { Core } from '@strapi/strapi';
 
 const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Database => {
   const client = env('DATABASE_CLIENT', 'sqlite');
+  const isProduction = env('NODE_ENV', 'development') === 'production';
 
   const connections = {
     mysql: {
@@ -56,6 +57,10 @@ const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Database 
       client,
       ...connections[client],
       acquireConnectionTimeout: env.int('DATABASE_CONNECTION_TIMEOUT', 60000),
+    },
+    settings: {
+      runMigrations: env.bool('DATABASE_RUN_MIGRATIONS', true),
+      forceMigration: env.bool('DATABASE_FORCE_MIGRATION', !isProduction),
     },
   };
 };

@@ -5,9 +5,12 @@
   },
   "options": {},
   "attributes": {
+    "employee_name": {
+      "type": "string"
+    },
     "contact": {
       "type": "relation",
-      "relation": "oneToOne",
+      "relation": "manyToOne",
       "target": "api::contact.contact"
     },
     "overtime_amount": {
@@ -25,33 +28,49 @@
     "rental_allowance": {
       "type": "decimal"
     },
-    "amount_to_transfer": {
+    "bonus": {
+      "type": "decimal"
+    },
+    "gross_pay": {
+      "type": "decimal"
+    },
+    "net_pay": {
+      "type": "decimal"
+    },
+    "converted_gross_pay": {
+      "type": "decimal"
+    },
+    "converted_loan_deduction": {
+      "type": "decimal"
+    },
+    "converted_net_pay": {
       "type": "decimal"
     },
     "payroll_status": {
       "type": "enumeration",
       "enum": [
         "draft",
-        "waiting_for_approval",
-        "sent"
+        "processed"
       ]
     },
-    "transaction": {
+    "salary_transaction": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::transaction.transaction"
+    },
+    "loan_repayment_transaction": {
       "type": "relation",
       "relation": "oneToOne",
       "target": "api::transaction.transaction"
     },
     "loan_ref": {
       "type": "relation",
-      "relation": "oneToOne",
+      "relation": "manyToOne",
       "target": "api::loan.loan"
-    },
-    "bonus": {
-      "type": "decimal"
     },
     "payee_account": {
       "type": "relation",
-      "relation": "oneToOne",
+      "relation": "manyToOne",
       "target": "api::account.account"
     }
   },

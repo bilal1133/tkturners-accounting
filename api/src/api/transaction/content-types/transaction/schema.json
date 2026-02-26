@@ -7,7 +7,7 @@
     "displayName": "Transaction"
   },
   "options": {
-    "draftAndPublish": true
+    "draftAndPublish": false
   },
   "pluginOptions": {},
   "attributes": {
@@ -37,11 +37,7 @@
     },
     "type": {
       "type": "dynamiczone",
-      "components": [
-        "type.expense",
-        "type.income",
-        "type.transfer"
-      ],
+      "components": ["type.expense", "type.income", "type.transfer"],
       "required": true,
       "max": 1
     },
@@ -61,6 +57,11 @@
       "relation": "oneToOne",
       "target": "api::loan.loan",
       "mappedBy": "disbursement_transaction"
+    },
+    "loan_repayment": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::loan.loan"
     }
   }
 }

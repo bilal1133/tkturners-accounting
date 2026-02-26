@@ -549,18 +549,94 @@ export interface ApiCurrencyCurrency extends Struct.CollectionTypeSchema {
   };
   attributes: {
     accounts: Schema.Attribute.Relation<'oneToMany', 'api::account.account'>;
+    code: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    is_active: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
       'api::currency.currency'
     > &
       Schema.Attribute.Private;
-    Name: Schema.Attribute.String & Schema.Attribute.Required;
+    name: Schema.Attribute.String & Schema.Attribute.Required;
     publishedAt: Schema.Attribute.DateTime;
-    Symbol: Schema.Attribute.String;
+    symbol: Schema.Attribute.String & Schema.Attribute.Required;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiEmployeeSlackLinkEmployeeSlackLink
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'employee_slack_links';
+  info: {
+    displayName: 'Employee Slack Link';
+    pluralName: 'employee-slack-links';
+    singularName: 'employee-slack-link';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    contact: Schema.Attribute.Relation<'oneToOne', 'api::contact.contact'> &
+      Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    last_used_at: Schema.Attribute.DateTime;
+    linked_email: Schema.Attribute.Email & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::employee-slack-link.employee-slack-link'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    slack_team_id: Schema.Attribute.String & Schema.Attribute.Required;
+    slack_user_id: Schema.Attribute.String & Schema.Attribute.Required;
+    status: Schema.Attribute.Enumeration<['active', 'revoked']> &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'active'>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiFinancialQueryAuditFinancialQueryAudit
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'financial_query_audits';
+  info: {
+    displayName: 'Financial Query Audit';
+    pluralName: 'financial-query-audits';
+    singularName: 'financial-query-audit';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    command: Schema.Attribute.String & Schema.Attribute.Required;
+    contact_id: Schema.Attribute.Integer;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::financial-query-audit.financial-query-audit'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    result: Schema.Attribute.Enumeration<['success', 'denied', 'error']> &
+      Schema.Attribute.Required;
+    slack_user_id: Schema.Attribute.String & Schema.Attribute.Required;
+    team_id: Schema.Attribute.String & Schema.Attribute.Required;
+    timestamp: Schema.Attribute.DateTime & Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -616,15 +692,18 @@ export interface ApiPayrollPayroll extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     employee_details: Schema.Attribute.Component<'employee.employee', true>;
+    ledger_synced: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
       'api::payroll.payroll'
     > &
       Schema.Attribute.Private;
+    pay_date: Schema.Attribute.Date & Schema.Attribute.Required;
     pay_period_end: Schema.Attribute.Date & Schema.Attribute.Required;
     pay_period_start: Schema.Attribute.Date & Schema.Attribute.Required;
-    payroll_status: Schema.Attribute.Enumeration<['draft', 'processed']>;
+    payroll_status: Schema.Attribute.Enumeration<['draft', 'processed']> &
+      Schema.Attribute.DefaultTo<'draft'>;
     publishedAt: Schema.Attribute.DateTime;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -680,7 +759,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
     singularName: 'transaction';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   attributes: {
     category: Schema.Attribute.Relation<'manyToOne', 'api::category.category'>;
@@ -690,6 +769,7 @@ export interface ApiTransactionTransaction extends Struct.CollectionTypeSchema {
       Schema.Attribute.Private;
     date_time: Schema.Attribute.DateTime & Schema.Attribute.Required;
     loan_disbursement: Schema.Attribute.Relation<'oneToOne', 'api::loan.loan'>;
+    loan_repayment: Schema.Attribute.Relation<'manyToOne', 'api::loan.loan'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
       'oneToMany',
@@ -1240,6 +1320,8 @@ declare module '@strapi/strapi' {
       'api::category.category': ApiCategoryCategory;
       'api::contact.contact': ApiContactContact;
       'api::currency.currency': ApiCurrencyCurrency;
+      'api::employee-slack-link.employee-slack-link': ApiEmployeeSlackLinkEmployeeSlackLink;
+      'api::financial-query-audit.financial-query-audit': ApiFinancialQueryAuditFinancialQueryAudit;
       'api::loan.loan': ApiLoanLoan;
       'api::payroll.payroll': ApiPayrollPayroll;
       'api::project.project': ApiProjectProject;

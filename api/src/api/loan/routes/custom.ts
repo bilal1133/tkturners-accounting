@@ -4,9 +4,11 @@ export default {
       method: "POST",
       path: "/loans/issue",
       handler: "api::loan.loan.issue",
-      config: {
-        auth: false,
-      },
+    },
+    {
+      method: "POST",
+      path: "/loans/repay",
+      handler: "api::loan.loan.repay",
     },
   ],
 };

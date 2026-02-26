@@ -1,5 +1,15 @@
 # 🚀 Getting started with Strapi
 
+## Slack Financial Self-Service env vars
+
+Set these before enabling the Slack command endpoint:
+
+- `SLACK_FINANCIALS_ENABLED` (`true`/`false`, default `false`)
+- `SLACK_SIGNING_SECRET`
+- `SLACK_BOT_TOKEN`
+- `SLACK_ALLOWED_TEAM_ID` (supports comma-separated values)
+- `SLACK_COMMAND_NAME` (default `financials`)
+
 Strapi comes with a full featured [Command Line Interface](https://docs.strapi.io/dev-docs/cli) (CLI) which lets you scaffold and manage your project in seconds.
 
 ### `develop`

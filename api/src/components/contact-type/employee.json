@@ -38,17 +38,45 @@
     "profile_picture": {
       "type": "media",
       "multiple": false,
-      "allowedTypes": ["images", "files", "videos", "audios"]
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
     },
     "other_documents": {
       "type": "media",
       "multiple": true,
-      "allowedTypes": ["images", "files", "videos", "audios"]
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
     },
     "loans": {
       "type": "relation",
       "relation": "oneToMany",
       "target": "api::loan.loan"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "department": {
+      "type": "enumeration",
+      "enum": [
+        "Management",
+        "Engineering",
+        "HouseKeeping",
+        "Marketing",
+        "Bussiness Development"
+      ]
+    },
+    "currency": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::currency.currency"
     }
   },
   "config": {}

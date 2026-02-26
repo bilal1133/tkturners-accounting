@@ -1,0 +1,45 @@
+{
+  "kind": "collectionType",
+  "collectionName": "employee_slack_links",
+  "info": {
+    "singularName": "employee-slack-link",
+    "pluralName": "employee-slack-links",
+    "displayName": "Employee Slack Link"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "slack_user_id": {
+      "type": "string",
+      "required": true
+    },
+    "slack_team_id": {
+      "type": "string",
+      "required": true
+    },
+    "contact": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::contact.contact",
+      "required": true
+    },
+    "linked_email": {
+      "type": "email",
+      "required": true
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "active",
+        "revoked"
+      ],
+      "required": true,
+      "default": "active"
+    },
+    "last_used_at": {
+      "type": "datetime"
+    }
+  }
+}

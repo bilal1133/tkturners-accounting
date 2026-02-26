@@ -4,9 +4,21 @@ export default {
       method: "GET",
       path: "/payrolls/employee/:id",
       handler: "payroll.findByEmployee",
-      config: {
-        auth: false, // Set to true if you are using JWT authentication
-      },
+    },
+    {
+      method: "POST",
+      path: "/payrolls/:id/process",
+      handler: "payroll.process",
+    },
+    {
+      method: "GET",
+      path: "/payrolls/:id/export.csv",
+      handler: "payroll.exportCsv",
+    },
+    {
+      method: "GET",
+      path: "/payrolls/:id/details",
+      handler: "payroll.findOneDetailed",
     },
   ],
 };

@@ -13,6 +13,7 @@ import {
   TrendingDown,
 } from "lucide-react";
 import { format } from "date-fns";
+import { currencySymbol } from "../lib/currency";
 
 export const ProjectDetailsPage = () => {
   const { id } = useParams();
@@ -250,7 +251,7 @@ export const ProjectDetailsPage = () => {
                               : "text-slate-200"
                         }`}
                       >
-                        {comp.currency?.Symbol}{" "}
+                        {currencySymbol(comp.currency)}{" "}
                         {parseFloat(amt).toLocaleString()}
                       </td>
                       <td className="p-4 text-right">

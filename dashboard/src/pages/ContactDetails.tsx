@@ -12,10 +12,12 @@ import {
   RefreshCw,
   Edit,
   Plus,
+  Pencil,
 } from "lucide-react";
 import { format } from "date-fns";
 import { EditContactModal } from "../components/EditContactModal";
-import { IssueLoanModal } from "../components/IssueLoanModal";
+import { LoanModal } from "../components/LoanModal";
+import { currencyName, currencySymbol as getCurrencySymbol } from "../lib/currency";
 
 export const ContactDetailsPage = () => {
   const { id } = useParams();
@@ -34,6 +36,10 @@ export const ContactDetailsPage = () => {
   const [loading, setLoading] = useState(true);
   const [isEditModalOpen, setEditModalOpen] = useState(false);
   const [isIssueLoanOpen, setIssueLoanOpen] = useState(false);
+  const [selectedLoan, setSelectedLoan] = useState<any>(null);
+  const [loanModalMode, setLoanModalMode] = useState<
+    "issue" | "edit" | "repay"
+  >("issue");
 
   useEffect(() => {
     if (id) {
@@ -64,38 +70,68 @@ export const ContactDetailsPage = () => {
     try {
       // Fetch contact with nested loans for the dynamic zone
       const contactRes = await api.get(
-        `/contacts/${id}?populate=contact_type.loans`,
+        `/contacts/${id}?populate=contact_type.loans,contact_type.currency`,
       );
       const contactData = contactRes.data.data;
       setContact(contactData);
 
-      // Extract loans from the dynamic zone if employee
-      if (
-        contactData.contact_type?.length > 0 &&
-        contactData.contact_type[0].__component === "contact-type.employee"
-      ) {
-        const empLoans = contactData.contact_type[0].loans || [];
-        setLoans(empLoans);
-        // Client side pagination metadata mock since it's nested data
-        setLoansMeta({
-          pagination: {
-            page: 1,
-            pageSize: 10,
-            pageCount: 1,
-            total: empLoans.length,
-          },
-        });
+      const [txRes, projRes, loanRes] = await Promise.all([
+        api.get(
+          `/transactions?filters[contact][id][$eq]=${contactData.id}&populate[0]=type.currency&populate[1]=type.account&populate[2]=type.from_account&populate[3]=type.to_account&populate[4]=category&populate[5]=loan_disbursement&populate[6]=loan_repayment&sort=date_time:desc`,
+        ),
+        api.get(
+          `/projects?filters[contact][documentId][$eq]=${id}&populate=*`,
+        ),
+        api.get(
+          `/loans?filters[disbursement_transaction][contact][id][$eq]=${contactData.id}&populate[0]=disbursement_transaction&populate[1]=disbursement_transaction.contact&sort=createdAt:desc&pagination[pageSize]=1000`,
+        ),
+      ]);
+
+      setTransactions(txRes.data.data);
+      setProjects(projRes.data.data);
+
+      // Preferred source: loans linked through disbursement transaction contact.
+      // If id-based nested relation filter returns empty, retry with documentId.
+      let linkedLoans = loanRes.data.data || [];
+      if (linkedLoans.length === 0 && contactData.documentId) {
+        try {
+          const fallbackLoanRes = await api.get(
+            `/loans?filters[disbursement_transaction][contact][documentId][$eq]=${contactData.documentId}&populate[0]=disbursement_transaction&populate[1]=disbursement_transaction.contact&sort=createdAt:desc&pagination[pageSize]=1000`,
+          );
+          linkedLoans = fallbackLoanRes.data.data || [];
+        } catch (fallbackError) {
+          console.error(
+            "Failed fallback loan lookup by contact documentId",
+            fallbackError,
+          );
+        }
       }
 
-      const txRes = await api.get(
-        `/transactions?filters[contact][$eq]=${id}&populate[0]=type.currency&sort=date_time:desc`,
-      );
-      setTransactions(txRes.data.data);
+      // Fallback: legacy dynamic-zone relation (for older records).
+      const dzLoans =
+        contactData.contact_type?.length > 0 &&
+        contactData.contact_type[0].__component === "contact-type.employee"
+          ? contactData.contact_type[0].loans || []
+          : [];
 
-      const projRes = await api.get(
-        `/projects?filters[contact][$eq]=${id}&populate=*`,
-      );
-      setProjects(projRes.data.data);
+      const mergedLoans = [...linkedLoans];
+      const seen = new Set(mergedLoans.map((ln: any) => ln.id));
+      dzLoans.forEach((ln: any) => {
+        if (!seen.has(ln.id)) {
+          mergedLoans.push(ln);
+          seen.add(ln.id);
+        }
+      });
+
+      setLoans(mergedLoans);
+      setLoansMeta({
+        pagination: {
+          page: 1,
+          pageSize: 10,
+          pageCount: 1,
+          total: mergedLoans.length,
+        },
+      });
     } catch (e) {
       console.error(e);
     } finally {
@@ -126,6 +162,10 @@ export const ContactDetailsPage = () => {
           (c: any) => c.__component === "contact-type.employee",
         )
       : null;
+  const employeeCurrencySymbol =
+    getCurrencySymbol(employeeData?.currency) ||
+    currencyName(employeeData?.currency) ||
+    "";
   const customerData =
     contactTypeLabel === "Customer"
       ? contact.contact_type.find(
@@ -237,6 +277,7 @@ export const ContactDetailsPage = () => {
               {employeeData.salary && (
                 <p className="text-lg font-semibold text-white">
                   Base Salary:{" "}
+                  {employeeCurrencySymbol}
                   {parseFloat(employeeData.salary).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
                   })}{" "}
@@ -270,7 +311,7 @@ export const ContactDetailsPage = () => {
                   <div className="text-xs">
                     <span className="block text-slate-500 mb-0.5">Fuel</span>
                     <span className="text-slate-300">
-                      ${parseFloat(employeeData.fuel_allowance).toFixed(2)}
+                      {employeeCurrencySymbol}{parseFloat(employeeData.fuel_allowance).toFixed(2)}
                     </span>
                   </div>
                 )}
@@ -278,7 +319,7 @@ export const ContactDetailsPage = () => {
                   <div className="text-xs">
                     <span className="block text-slate-500 mb-0.5">Rental</span>
                     <span className="text-slate-300">
-                      ${parseFloat(employeeData.rental_allowance).toFixed(2)}
+                      {employeeCurrencySymbol}{parseFloat(employeeData.rental_allowance).toFixed(2)}
                     </span>
                   </div>
                 )}
@@ -286,7 +327,7 @@ export const ContactDetailsPage = () => {
                   <div className="text-xs">
                     <span className="block text-slate-500 mb-0.5">Gym</span>
                     <span className="text-slate-300">
-                      ${parseFloat(employeeData.gym_allowance).toFixed(2)}
+                      {employeeCurrencySymbol}{parseFloat(employeeData.gym_allowance).toFixed(2)}
                     </span>
                   </div>
                 )}
@@ -350,24 +391,25 @@ export const ContactDetailsPage = () => {
 
       <div>
         <h2 className="text-xl font-semibold text-white mb-4">
-          Historical Transactions
+          Transaction History
         </h2>
         <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-800/50 text-sm font-medium text-slate-400">
+              <tr className="border-b border-slate-800 bg-slate-800/50 text-xs font-medium text-slate-400 uppercase tracking-wider">
                 <th className="p-4">Date</th>
                 <th className="p-4">Type</th>
-                <th className="p-4">Note</th>
+                <th className="p-4">Account</th>
+                <th className="p-4">Details</th>
                 <th className="p-4 text-right">Amount</th>
                 <th className="p-4"></th>
               </tr>
             </thead>
-            <tbody className="text-sm">
+            <tbody className="text-sm divide-y divide-slate-800/50">
               {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-500">
-                    No payment history.
+                  <td colSpan={6} className="p-8 text-center text-slate-500">
+                    No transaction history.
                   </td>
                 </tr>
               ) : (
@@ -377,15 +419,27 @@ export const ContactDetailsPage = () => {
                   const isIncome = comp.__component === "type.income";
                   const isExpense = comp.__component === "type.expense";
                   const isTransfer = comp.__component === "type.transfer";
-                  const amt = isTransfer ? comp.from_amount : comp.amount;
+                  const isLoanDisbursement = !!tx.loan_disbursement;
+                  const isLoanRepayment = !!tx.loan_repayment;
+
+                  const accountDisplay = isTransfer
+                    ? `${comp.from_account?.name || "?"} → ${comp.to_account?.name || "?"}`
+                    : comp.account?.name || "-";
+
+                  const amountDisplay = isTransfer
+                    ? `${comp.from_amount?.toLocaleString()} → ${comp.to_amount?.toLocaleString()}`
+                    : `${getCurrencySymbol(comp.currency) || ""}${parseFloat(comp.amount || 0).toLocaleString()}`;
 
                   return (
                     <tr
                       key={tx.id}
-                      className="border-b last:border-0 border-slate-800 hover:bg-slate-800/30 transition-colors"
+                      className="hover:bg-slate-800/30 transition-colors"
                     >
                       <td className="p-4 text-slate-300 font-medium whitespace-nowrap">
                         {format(new Date(tx.date_time), "MMM dd, yyyy")}
+                        <span className="block text-[11px] text-slate-500 mt-0.5">
+                          {format(new Date(tx.date_time), "h:mm a")}
+                        </span>
                       </td>
                       <td className="p-4">
                         <span
@@ -397,25 +451,59 @@ export const ContactDetailsPage = () => {
                                 : "bg-blue-500/10 text-blue-500 border-blue-500/20"
                           }`}
                         >
-                          {isIncome && <ArrowDownRight size={14} />}
-                          {isExpense && <ArrowUpRight size={14} />}
-                          {isTransfer && <RefreshCw size={14} />}
+                          {isIncome && <ArrowDownRight size={12} />}
+                          {isExpense && <ArrowUpRight size={12} />}
+                          {isTransfer && <RefreshCw size={12} />}
                           {comp.__component.replace("type.", "")}
                         </span>
+                        {tx.payment_type && (
+                          <span className="block mt-1.5 text-[11px] text-slate-500 font-medium">
+                            {tx.payment_type}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-4 text-slate-300 text-sm">
+                        {accountDisplay}
+                      </td>
+                      <td className="p-4">
+                        <div className="flex flex-col gap-1">
+                          {tx.note && (
+                            <span className="text-slate-300 text-sm">
+                              {tx.note}
+                            </span>
+                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {tx.category?.name && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                                {tx.category.name}
+                              </span>
+                            )}
+                            {isLoanDisbursement && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                Loan Disbursement
+                              </span>
+                            )}
+                            {isLoanRepayment && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                Loan Repayment
+                              </span>
+                            )}
+                          </div>
+                          {!tx.note && !tx.category?.name && !isLoanDisbursement && !isLoanRepayment && (
+                            <span className="text-slate-600 text-sm">—</span>
+                          )}
+                        </div>
                       </td>
                       <td
-                        className="p-4 text-slate-300 max-w-[200px] truncate"
-                        title={tx.note}
-                      >
-                        {tx.note || "-"}
-                      </td>
-                      <td
-                        className={`p-4 text-right font-medium whitespace-nowrap ${
-                          isIncome ? "text-emerald-400" : "text-slate-200"
+                        className={`p-4 text-right font-mono font-medium whitespace-nowrap ${
+                          isIncome
+                            ? "text-emerald-400"
+                            : isTransfer
+                              ? "text-blue-400"
+                              : "text-slate-200"
                         }`}
                       >
-                        {comp.currency?.Symbol || ""}{" "}
-                        {parseFloat(amt).toLocaleString()}
+                        {amountDisplay}
                       </td>
                       <td className="p-4 text-right">
                         <Link
@@ -440,7 +528,11 @@ export const ContactDetailsPage = () => {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-semibold text-white">Loan History</h2>
               <button
-                onClick={() => setIssueLoanOpen(true)}
+                onClick={() => {
+                  setSelectedLoan(null);
+                  setLoanModalMode("issue");
+                  setIssueLoanOpen(true);
+                }}
                 className="text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-md flex items-center gap-1 transition-colors text-slate-300"
               >
                 <Plus size={16} /> Issue Loan
@@ -454,6 +546,7 @@ export const ContactDetailsPage = () => {
                     <th className="p-4 font-medium">Principal</th>
                     <th className="p-4 font-medium">Remaining</th>
                     <th className="p-4 font-medium">Status</th>
+                    <th className="p-4"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
@@ -479,13 +572,13 @@ export const ContactDetailsPage = () => {
                           )}
                         </td>
                         <td className="p-4 text-slate-300">
-                          $
+                          {employeeCurrencySymbol}
                           {parseFloat(
-                            ln.principal_amount || 0,
+                            ln.total_amount || 0,
                           ).toLocaleString()}
                         </td>
                         <td className="p-4 text-amber-400 font-medium">
-                          $
+                          {employeeCurrencySymbol}
                           {parseFloat(
                             ln.remaining_balance || 0,
                           ).toLocaleString()}
@@ -496,6 +589,30 @@ export const ContactDetailsPage = () => {
                           >
                             {ln.status}
                           </span>
+                        </td>
+                        <td className="p-4 text-right">
+                          <button
+                            onClick={() => {
+                              setSelectedLoan(ln);
+                              setLoanModalMode("repay");
+                              setIssueLoanOpen(true);
+                            }}
+                            className="p-1 text-slate-500 hover:bg-slate-800 hover:text-emerald-400 rounded transition-colors mr-1"
+                            title="Repay Loan"
+                          >
+                            <RefreshCw size={14} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedLoan(ln);
+                              setLoanModalMode("edit");
+                              setIssueLoanOpen(true);
+                            }}
+                            className="p-1 text-slate-500 hover:bg-slate-800 hover:text-indigo-400 rounded transition-colors"
+                            title="Edit Loan"
+                          >
+                            <Pencil size={14} />
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -559,14 +676,24 @@ export const ContactDetailsPage = () => {
                         <td className="p-4 text-slate-300">
                           {format(new Date(pr.pay_period_start), "MMM dd")} -{" "}
                           {format(new Date(pr.pay_period_end), "MMM dd, yyyy")}
+                          {pr.pay_date ? (
+                            <span className="block text-[11px] text-slate-500 mt-0.5">
+                              Paid: {format(new Date(pr.pay_date), "MMM dd, yyyy")}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="p-4 text-slate-400 capitalize">
                           {pr.batch_status}
+                          {pr.ledger_synced === false ? (
+                            <span className="block text-[11px] text-amber-400 mt-0.5">
+                              Ledger not synced
+                            </span>
+                          ) : null}
                         </td>
                         <td className="p-4 text-indigo-400 font-bold text-right">
-                          $
+                          {getCurrencySymbol(pr.payee_account?.currency) || employeeCurrencySymbol}
                           {parseFloat(
-                            pr.amount_to_transfer || 0,
+                            pr.converted_net_pay ?? pr.net_pay ?? 0,
                           ).toLocaleString(undefined, {
                             minimumFractionDigits: 2,
                           })}
@@ -615,14 +742,20 @@ export const ContactDetailsPage = () => {
         />
       )}
 
-      <IssueLoanModal
+      <LoanModal
         isOpen={isIssueLoanOpen}
-        onClose={() => setIssueLoanOpen(false)}
+        onClose={() => {
+          setIssueLoanOpen(false);
+          setSelectedLoan(null);
+        }}
         onSuccess={() => {
           setIssueLoanOpen(false);
+          setSelectedLoan(null);
           loadData();
         }}
         defaultContactId={contact.id?.toString()}
+        mode={loanModalMode}
+        loanData={selectedLoan}
       />
     </div>
   );

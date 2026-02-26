@@ -1,0 +1,43 @@
+{
+  "kind": "collectionType",
+  "collectionName": "financial_query_audits",
+  "info": {
+    "singularName": "financial-query-audit",
+    "pluralName": "financial-query-audits",
+    "displayName": "Financial Query Audit"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "command": {
+      "type": "string",
+      "required": true
+    },
+    "slack_user_id": {
+      "type": "string",
+      "required": true
+    },
+    "team_id": {
+      "type": "string",
+      "required": true
+    },
+    "contact_id": {
+      "type": "integer"
+    },
+    "result": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "success",
+        "denied",
+        "error"
+      ]
+    },
+    "timestamp": {
+      "type": "datetime",
+      "required": true
+    }
+  }
+}

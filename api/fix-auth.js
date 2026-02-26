@@ -10,11 +10,16 @@ const pool = new Pool({
 
 (async () => {
   try {
-    // Get the Authenticated role ID
-    const roleRes = await pool.query("SELECT id FROM up_roles WHERE type = 'authenticated'");
-    const roleId = roleRes.rows[0].id;
-    
-    console.log(`Authenticated role ID: ${roleId}`);
+    // Get finance-admin role ID (fallback to authenticated for legacy environments).
+    const financeRoleRes = await pool.query("SELECT id FROM up_roles WHERE type = 'finance-admin' LIMIT 1");
+    const fallbackRoleRes = await pool.query("SELECT id FROM up_roles WHERE type = 'authenticated' LIMIT 1");
+    const roleId = financeRoleRes.rows[0]?.id || fallbackRoleRes.rows[0]?.id;
+
+    if (!roleId) {
+      throw new Error("No valid user role found (finance-admin/authenticated)");
+    }
+
+    console.log(`Target role ID for permission seed: ${roleId}`);
     
     const controllers = [
       'api::account.account',

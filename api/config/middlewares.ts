@@ -7,7 +7,13 @@ const config: Core.Config.Middlewares = [
   'strapi::cors',
   'strapi::poweredBy',
   'strapi::query',
-  'strapi::body',
+  {
+    name: 'strapi::body',
+    config: {
+      // Needed to verify Slack request signatures from the raw payload.
+      includeUnparsed: true,
+    },
+  },
   'strapi::session',
   'strapi::favicon',
   'strapi::public',
