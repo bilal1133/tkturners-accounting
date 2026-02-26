@@ -18,6 +18,8 @@ const contactSchema = z.object({
     .optional()
     .or(z.literal("")),
   joining_date: z.string().optional().or(z.literal("")),
+  active: z.boolean().default(true),
+  department: z.string().optional().or(z.literal("")),
   fuel_allowance: z.string().optional().or(z.literal("")),
   rental_allowance: z.string().optional().or(z.literal("")),
   gym_allowance: z.string().optional().or(z.literal("")),
@@ -60,6 +62,8 @@ export const EditContactModal = ({
       position: "",
       cnic: "",
       joining_date: "",
+      active: true,
+      department: "",
       fuel_allowance: "",
       rental_allowance: "",
       gym_allowance: "",
@@ -97,6 +101,8 @@ export const EditContactModal = ({
         position: specificData.position || "",
         cnic: specificData.cnic ? specificData.cnic.toString() : "",
         joining_date: specificData.joining_date || "",
+        active: specificData.active ?? true,
+        department: specificData.department || "",
         fuel_allowance: specificData.fuel_allowance
           ? specificData.fuel_allowance.toString()
           : "",
@@ -129,6 +135,8 @@ export const EditContactModal = ({
             position: data.position,
             cnic: data.cnic ? data.cnic : null,
             joining_date: data.joining_date || null,
+            active: data.active,
+            department: data.department || null,
             fuel_allowance: data.fuel_allowance
               ? parseFloat(data.fuel_allowance)
               : null,
@@ -346,6 +354,44 @@ export const EditContactModal = ({
                   {errors.joining_date && (
                     <p className="text-red-400 text-xs mt-1">
                       {errors.joining_date.message as string}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">
+                    Department
+                  </label>
+                  <select
+                    {...register("department")}
+                    className={`w-full bg-slate-800 border ${errors.department ? "border-red-500" : "border-slate-700"} rounded-md p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none`}
+                  >
+                    <option value="">Select Department...</option>
+                    <option value="Management">Management</option>
+                    <option value="Engineering">Engineering</option>
+                    <option value="HouseKeeping">HouseKeeping</option>
+                    <option value="Marketing">Marketing</option>
+                    <option value="Bussiness Development">
+                      Business Development
+                    </option>
+                  </select>
+                  {errors.department && (
+                    <p className="text-red-400 text-xs mt-1">
+                      {errors.department.message as string}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center mt-8">
+                  <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-400">
+                    <input
+                      type="checkbox"
+                      {...register("active")}
+                      className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-900"
+                    />
+                    Active Employee
+                  </label>
+                  {errors.active && (
+                    <p className="text-red-400 text-xs ml-2">
+                      {errors.active.message as string}
                     </p>
                   )}
                 </div>
