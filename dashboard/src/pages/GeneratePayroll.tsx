@@ -13,6 +13,7 @@ export const GeneratePayrollPage = () => {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [status, setStatus] = useState("draft");
+  const [departmentFilter, setDepartmentFilter] = useState("All");
 
   // Form entries
   const [entries, setEntries] = useState<Record<string, any>>({});
@@ -32,9 +33,30 @@ export const GeneratePayrollPage = () => {
       const fetchedEmployees = empRes.data.data || [];
       const fetchedLoans = loanRes.data.data || [];
 
+      // Filter active employees and inject department for easier sorting
+      const activeEmployees = fetchedEmployees
+        .filter((emp: any) => {
+          const empConfig =
+            emp.contact_type?.find(
+              (c: any) => c.__component === "contact-type.employee",
+            ) || {};
+          // Only process employees explicitly marked true or undefined (assumes true if undefined to be safe, but let's strictly require false to drop them)
+          return empConfig.active !== false;
+        })
+        .map((emp: any) => {
+          const empConfig =
+            emp.contact_type?.find(
+              (c: any) => c.__component === "contact-type.employee",
+            ) || {};
+          return {
+            ...emp,
+            department: empConfig.department || "Unassigned",
+          };
+        });
+
       // Initialize entries state
       const initialEntries: Record<string, any> = {};
-      fetchedEmployees.forEach((emp: any) => {
+      activeEmployees.forEach((emp: any) => {
         // Find if they have an active loan
         const empLoan = fetchedLoans.find(
           (l: any) => l.employee && String(l.employee.id) === String(emp.id),
@@ -63,7 +85,7 @@ export const GeneratePayrollPage = () => {
         };
       });
 
-      setEmployees(fetchedEmployees);
+      setEmployees(activeEmployees);
       setEntries(initialEntries);
     } catch (error) {
       console.error("Failed to load generic payroll data", error);
@@ -110,7 +132,13 @@ export const GeneratePayrollPage = () => {
 
     setSubmitting(true);
     try {
-      const employeeDetails = employees.map((emp) => {
+      // Filter the employees list to only those included in the current batch configuration
+      const filteredEmployees =
+        departmentFilter === "All"
+          ? employees
+          : employees.filter((emp) => emp.department === departmentFilter);
+
+      const employeeDetails = filteredEmployees.map((emp) => {
         const entry = entries[emp.id];
         return {
           __component: "employee.employee",
@@ -153,6 +181,11 @@ export const GeneratePayrollPage = () => {
     );
   }
 
+  const filteredEmployees =
+    departmentFilter === "All"
+      ? employees
+      : employees.filter((emp) => emp.department === departmentFilter);
+
   return (
     <div className="max-w-[1600px] mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -194,7 +227,7 @@ export const GeneratePayrollPage = () => {
         <h2 className="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-800 pb-2">
           Batch Configuration
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1.5">
               Period Start Date
@@ -218,6 +251,26 @@ export const GeneratePayrollPage = () => {
               required
               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">
+              Department Filter
+            </label>
+            <select
+              value={departmentFilter}
+              onChange={(e) => setDepartmentFilter(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="All">All Departments</option>
+              <option value="Management">Management</option>
+              <option value="Engineering">Engineering</option>
+              <option value="HouseKeeping">HouseKeeping</option>
+              <option value="Marketing">Marketing</option>
+              <option value="Bussiness Development">
+                Business Development
+              </option>
+              <option value="Unassigned">Unassigned</option>
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1.5">
@@ -262,14 +315,14 @@ export const GeneratePayrollPage = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
-              {employees.length === 0 ? (
+              {filteredEmployees.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-8 text-center text-slate-500">
-                    No active employees found.
+                    No active employees found matching criteria.
                   </td>
                 </tr>
               ) : (
-                employees.map((emp) => {
+                filteredEmployees.map((emp) => {
                   const entry = entries[emp.id];
                   if (!entry) return null;
 
@@ -284,7 +337,12 @@ export const GeneratePayrollPage = () => {
                       className="hover:bg-slate-800/30 transition-colors group"
                     >
                       <td className="p-4 font-medium text-slate-300 sticky left-0 bg-slate-900 group-hover:bg-slate-800/80 transition-colors">
-                        {emp.name}
+                        <div className="flex flex-col">
+                          <span>{emp.name}</span>
+                          <span className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-wider">
+                            {emp.department}
+                          </span>
+                        </div>
                         {entry.loan_ref && (
                           <span className="block text-[10px] text-orange-400 mt-1 uppercase font-semibold">
                             Active Loan Found
