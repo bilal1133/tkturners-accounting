@@ -11,9 +11,11 @@ import {
   ArrowDownRight,
   RefreshCw,
   Edit,
+  Plus,
 } from "lucide-react";
 import { format } from "date-fns";
 import { EditContactModal } from "../components/EditContactModal";
+import { IssueLoanModal } from "../components/IssueLoanModal";
 
 export const ContactDetailsPage = () => {
   const { id } = useParams();
@@ -31,6 +33,7 @@ export const ContactDetailsPage = () => {
 
   const [loading, setLoading] = useState(true);
   const [isEditModalOpen, setEditModalOpen] = useState(false);
+  const [isIssueLoanOpen, setIssueLoanOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -436,6 +439,12 @@ export const ContactDetailsPage = () => {
           <div>
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-semibold text-white">Loan History</h2>
+              <button
+                onClick={() => setIssueLoanOpen(true)}
+                className="text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-md flex items-center gap-1 transition-colors text-slate-300"
+              >
+                <Plus size={16} /> Issue Loan
+              </button>
             </div>
             <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
               <table className="w-full text-left border-collapse">
@@ -605,6 +614,16 @@ export const ContactDetailsPage = () => {
           contactData={contact}
         />
       )}
+
+      <IssueLoanModal
+        isOpen={isIssueLoanOpen}
+        onClose={() => setIssueLoanOpen(false)}
+        onSuccess={() => {
+          setIssueLoanOpen(false);
+          loadData();
+        }}
+        defaultContactId={contact.id?.toString()}
+      />
     </div>
   );
 };

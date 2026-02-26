@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { Banknote, CreditCard, Plus, CheckCircle, Clock } from "lucide-react";
 import { format } from "date-fns";
-import { DisburseLoanModal } from "../components/DisburseLoanModal";
+import { IssueLoanModal } from "../components/IssueLoanModal";
 
 export const PayrollPage = () => {
   const navigate = useNavigate();
@@ -222,7 +222,7 @@ export const PayrollPage = () => {
         </div>
       </div>
 
-      <DisburseLoanModal
+      <IssueLoanModal
         isOpen={isLoanModalOpen}
         onClose={() => setLoanModalOpen(false)}
         onSuccess={() => loadData()}

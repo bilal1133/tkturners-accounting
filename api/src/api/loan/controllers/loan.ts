@@ -101,5 +101,97 @@ export default factories.createCoreController(
 
       return response;
     },
+
+    async issue(ctx) {
+      try {
+        const { employeeId, accountId, amount, monthlyInstallment, date } =
+          ctx.request.body.data;
+
+        if (!employeeId || !accountId || !amount || !monthlyInstallment) {
+          return ctx.badRequest("Missing required fields for loan issuance");
+        }
+
+        // 1. Fetch the Employee Contact
+        const employeeContact = await strapi.entityService.findOne(
+          "api::contact.contact",
+          employeeId,
+          {
+            populate: ["contact_type", "contact_type.loans"],
+          },
+        );
+
+        if (!employeeContact) {
+          return ctx.notFound("Employee not found");
+        }
+
+        const employeeComponentIndex = (
+          employeeContact as any
+        ).contact_type?.findIndex(
+          (c: any) => c.__component === "contact-type.employee",
+        );
+
+        if (
+          employeeComponentIndex === -1 ||
+          employeeComponentIndex === undefined
+        ) {
+          return ctx.badRequest("Contact is not configured as an Employee");
+        }
+
+        // 2. Generate the Disbursement Transaction (Expense)
+        const transaction = await strapi.entityService.create(
+          "api::transaction.transaction",
+          {
+            data: {
+              date_time: date ? new Date(date) : new Date(),
+              note: `Loan Disbursement for ${employeeContact.name}`,
+              payment_type: "Transfer",
+              contact: employeeId,
+              type: [
+                {
+                  __component: "type.expense",
+                  amount: amount,
+                  account: accountId,
+                },
+              ],
+            },
+          },
+        );
+
+        // 3. Create the Loan Record
+        const loan = await strapi.entityService.create("api::loan.loan", {
+          data: {
+            total_amount: amount,
+            remaining_balance: amount,
+            monthly_installment: monthlyInstallment,
+            status: "Active",
+            disbursement_transaction: transaction.id,
+          },
+        });
+
+        // 4. Update the Employee's dynamic zone to inject the new Loan
+        const updatedContactType = [...(employeeContact as any).contact_type];
+        const existingLoans =
+          updatedContactType[employeeComponentIndex].loans || [];
+
+        updatedContactType[employeeComponentIndex].loans = [
+          ...existingLoans,
+          loan.id,
+        ];
+
+        await strapi.entityService.update("api::contact.contact", employeeId, {
+          data: {
+            contact_type: updatedContactType,
+          },
+        });
+
+        return ctx.send({
+          data: loan,
+          message: "Loan efficiently issued and fully orchestrated.",
+        });
+      } catch (error) {
+        console.error("Error issuing loan:", error);
+        return ctx.internalServerError("Failed to issue loan");
+      }
+    },
   }),
 );
