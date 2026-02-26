@@ -25,22 +25,26 @@ export const GeneratePayrollPage = () => {
   const fetchData = async () => {
     try {
       const [empRes, loanRes] = await Promise.all([
-        // Deep filter using new Strapi syntax or fetch all employees
-        api.get("/contacts?filters[type][$eq]=Employee&populate=*"),
+        // Strapi cannot filter dynamic zones, so we fetch all and filter in JS
+        api.get("/contacts?populate=*"),
         api.get("/loans?filters[status][$eq]=Active&populate=*"),
       ]);
 
       const fetchedEmployees = empRes.data.data || [];
       const fetchedLoans = loanRes.data.data || [];
 
-      // Filter active employees and inject department for easier sorting
+      // Filter actual active employees and inject department for easier sorting
       const activeEmployees = fetchedEmployees
         .filter((emp: any) => {
-          const empConfig =
-            emp.contact_type?.find(
-              (c: any) => c.__component === "contact-type.employee",
-            ) || {};
-          // Only process employees explicitly marked true or undefined (assumes true if undefined to be safe, but let's strictly require false to drop them)
+          if (!emp.contact_type || emp.contact_type.length === 0) return false;
+
+          const empConfig = emp.contact_type.find(
+            (c: any) => c.__component === "contact-type.employee",
+          );
+
+          if (!empConfig) return false; // Not an employee
+
+          // Employee found, check if they are active (default is true unless explicitly false)
           return empConfig.active !== false;
         })
         .map((emp: any) => {
