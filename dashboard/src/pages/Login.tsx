@@ -6,24 +6,46 @@ import axios from "axios";
 import { API_URL } from "../lib/api";
 import { Lock, Mail, Loader2 } from "lucide-react";
 
+interface LoginFormValues {
+  email: string;
+  password: string;
+  remember: boolean;
+}
+
+interface LoginResponse {
+  jwt: string;
+  user: {
+    id: number;
+    username: string;
+    email: string;
+  };
+}
+
 export const LoginPage = () => {
-  const { register, handleSubmit } = useForm();
+  const { register, handleSubmit } = useForm<LoginFormValues>({
+    defaultValues: {
+      remember: true,
+    },
+  });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const onSubmit = async (data: any) => {
+  const onSubmit = async (data: LoginFormValues) => {
     setError("");
     setLoading(true);
 
     try {
-      const response = await axios.post(`${API_URL}/api/auth/local`, {
-        identifier: data.email,
-        password: data.password,
-      });
+      const response = await axios.post<LoginResponse>(
+        `${API_URL}/api/auth/local`,
+        {
+          identifier: data.email,
+          password: data.password,
+        },
+      );
 
-      login(response.data.jwt, response.data.user);
+      login(response.data.jwt, response.data.user, data.remember);
       navigate("/");
     } catch (err: any) {
       console.error(err);
@@ -93,6 +115,15 @@ export const LoginPage = () => {
                 />
               </div>
             </div>
+
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                {...register("remember")}
+                className="rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500"
+              />
+              Keep me signed in on this device
+            </label>
 
             <button
               type="submit"

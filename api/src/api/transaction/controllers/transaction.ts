@@ -386,6 +386,17 @@ export default factories.createCoreController(
   "api::transaction.transaction",
   ({ strapi }) => ({
     async find(ctx) {
+      const query = (ctx.query ?? {}) as Record<string, unknown>;
+      const hasLedgerSpecificParams =
+        query.sortField !== undefined ||
+        query.paymentFilter !== undefined ||
+        query.categoryFilter !== undefined ||
+        query.accountFilter !== undefined;
+
+      if (hasLedgerSpecificParams) {
+        return await this.ledgerList(ctx, undefined as any);
+      }
+
       return await super.find(ctx);
     },
 
@@ -403,6 +414,168 @@ export default factories.createCoreController(
 
     async delete(ctx) {
       return await super.delete(ctx);
+    },
+
+    async ledgerList(ctx, _next) {
+      const q = (ctx.query ?? {}) as Record<string, unknown>;
+
+      const page = Math.max(1, Number.parseInt(String(q.page || 1), 10) || 1);
+      const pageSize = Math.max(
+        1,
+        Math.min(200, Number.parseInt(String(q.pageSize || 10), 10) || 10),
+      );
+
+      const search = normalizeText(q.search);
+      const paymentFilter = String(q.paymentFilter || "all").trim();
+      const categoryFilter = String(q.categoryFilter || "all").trim();
+      const accountFilter = String(q.accountFilter || "all").trim();
+      const accountIdFilter =
+        parseNumberParam(q.accountId) !== null
+          ? Number(parseNumberParam(q.accountId))
+          : null;
+
+      const sortFieldRaw = String(q.sortField || "date_time").trim();
+      const sortField: "date_time" | "payment_type" | "note" =
+        sortFieldRaw === "payment_type" || sortFieldRaw === "note"
+          ? sortFieldRaw
+          : "date_time";
+
+      const sortDirectionRaw = String(q.sortDirection || "desc").trim().toLowerCase();
+      const sortDirection: "asc" | "desc" =
+        sortDirectionRaw === "asc" ? "asc" : "desc";
+
+      const transactions = await loadAll(strapi, "api::transaction.transaction", {
+        populate: [
+          "contact",
+          "project",
+          "category",
+          "type",
+          "type.account",
+          "type.currency",
+          "type.from_account",
+          "type.to_account",
+        ],
+      });
+
+      const textMatches = (tx: any) => {
+        if (!search) return true;
+
+        const component = asArray<any>(tx?.type)[0] || null;
+        const haystack = normalizeText(
+          [
+            tx?.note,
+            tx?.payment_type,
+            tx?.contact?.name,
+            tx?.project?.name,
+            tx?.category?.name,
+            component?.account?.name,
+            component?.from_account?.name,
+            component?.to_account?.name,
+          ].join(" "),
+        );
+
+        return haystack.includes(search);
+      };
+
+      const accountMatches = (tx: any) => {
+        if (
+          (!accountFilter || accountFilter === "all") &&
+          accountIdFilter === null
+        ) {
+          return true;
+        }
+
+        const component = asArray<any>(tx?.type)[0] || null;
+        if (!component) return false;
+
+        const matchByDocument = (candidate: any) =>
+          accountFilter &&
+          accountFilter !== "all" &&
+          relationDocumentId(candidate) === accountFilter;
+        const matchById = (candidate: any) =>
+          accountIdFilter !== null && relationId(candidate) === accountIdFilter;
+
+        if (component.__component === "type.income" || component.__component === "type.expense") {
+          return (
+            matchByDocument(component.account) || matchById(component.account)
+          );
+        }
+
+        return (
+          matchByDocument(component.from_account) ||
+          matchById(component.from_account) ||
+          matchByDocument(component.to_account) ||
+          matchById(component.to_account)
+        );
+      };
+
+      const filtered = asArray<any>(transactions).filter((tx) => {
+        if (paymentFilter !== "all" && tx?.payment_type !== paymentFilter) {
+          return false;
+        }
+
+        if (
+          categoryFilter !== "all" &&
+          relationDocumentId(tx?.category) !== categoryFilter
+        ) {
+          return false;
+        }
+
+        if (!accountMatches(tx)) {
+          return false;
+        }
+
+        return textMatches(tx);
+      });
+
+      const collator = new Intl.Collator(undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+
+      const sorted = [...filtered].sort((left, right) => {
+        let compare = 0;
+
+        if (sortField === "date_time") {
+          compare =
+            new Date(String(left?.date_time || 0)).getTime() -
+            new Date(String(right?.date_time || 0)).getTime();
+        } else if (sortField === "payment_type") {
+          compare = collator.compare(
+            String(left?.payment_type || ""),
+            String(right?.payment_type || ""),
+          );
+        } else {
+          compare = collator.compare(
+            String(left?.note || ""),
+            String(right?.note || ""),
+          );
+        }
+
+        if (compare === 0) {
+          compare = Number(left?.id || 0) - Number(right?.id || 0);
+        }
+
+        return sortDirection === "asc" ? compare : -compare;
+      });
+
+      const total = sorted.length;
+      const pageCount = Math.max(1, Math.ceil(total / pageSize));
+      const safePage = Math.min(page, pageCount);
+      const start = (safePage - 1) * pageSize;
+      const data = sorted.slice(start, start + pageSize);
+
+      return {
+        data,
+        meta: {
+          pagination: {
+            page: safePage,
+            pageSize,
+            pageCount,
+            total,
+          },
+        },
+      };
     },
 
     async dashboardReport(ctx) {

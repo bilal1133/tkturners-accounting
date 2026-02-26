@@ -19,6 +19,18 @@ type TransactionComponent = {
   amount?: number | string | null;
   from_amount?: number | string | null;
   to_amount?: number | string | null;
+  account?: {
+    documentId?: string | null;
+    name?: string | null;
+  } | null;
+  from_account?: {
+    documentId?: string | null;
+    name?: string | null;
+  } | null;
+  to_account?: {
+    documentId?: string | null;
+    name?: string | null;
+  } | null;
   currency?: {
     symbol?: string | null;
     name?: string | null;
@@ -44,6 +56,11 @@ type CategoryOption = {
   name: string;
 };
 
+type AccountOption = {
+  documentId: string;
+  name: string;
+};
+
 type PaginationMeta = {
   page: number;
   pageSize: number;
@@ -55,6 +72,7 @@ type SortField = "date_time" | "payment_type" | "note";
 type SortDirection = "asc" | "desc";
 
 const CATEGORY_FETCH_PAGE_SIZE = 100;
+const ACCOUNT_FETCH_PAGE_SIZE = 100;
 const PAYMENT_OPTIONS = [
   "Cash",
   "Debit Card",
@@ -134,6 +152,7 @@ const buildTransactionQueryString = ({
   search,
   paymentFilter,
   categoryFilter,
+  accountFilter,
   sortField,
   sortDirection,
 }: {
@@ -142,38 +161,31 @@ const buildTransactionQueryString = ({
   search: string;
   paymentFilter: string;
   categoryFilter: string;
+  accountFilter: string;
   sortField: SortField;
   sortDirection: SortDirection;
 }) => {
   const params = new URLSearchParams();
 
-  params.set("populate[0]", "contact");
-  params.set("populate[1]", "project");
-  params.set("populate[2]", "category");
-  params.set("populate[3]", "type.account");
-  params.set("populate[4]", "type.currency");
-  params.set("populate[5]", "type.from_account");
-  params.set("populate[6]", "type.to_account");
-
-  params.set("pagination[withCount]", "true");
-  params.set("pagination[page]", String(page));
-  params.set("pagination[pageSize]", String(pageSize));
-  params.set("sort", `${SORT_FIELD_MAP[sortField]}:${sortDirection}`);
+  params.set("page", String(page));
+  params.set("pageSize", String(pageSize));
+  params.set("sortField", SORT_FIELD_MAP[sortField]);
+  params.set("sortDirection", sortDirection);
 
   if (paymentFilter !== "all") {
-    params.set("filters[payment_type][$eq]", paymentFilter);
+    params.set("paymentFilter", paymentFilter);
   }
 
   if (categoryFilter !== "all") {
-    params.set("filters[category][documentId][$eq]", categoryFilter);
+    params.set("categoryFilter", categoryFilter);
+  }
+
+  if (accountFilter !== "all") {
+    params.set("accountFilter", accountFilter);
   }
 
   if (search) {
-    params.set("filters[$or][0][note][$containsi]", search);
-    params.set("filters[$or][1][payment_type][$containsi]", search);
-    params.set("filters[$or][2][contact][name][$containsi]", search);
-    params.set("filters[$or][3][project][name][$containsi]", search);
-    params.set("filters[$or][4][category][name][$containsi]", search);
+    params.set("search", search);
   }
 
   return params.toString();
@@ -182,14 +194,17 @@ const buildTransactionQueryString = ({
 export const LedgerPage = () => {
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingCategories, setLoadingCategories] = useState(true);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [accountFilter, setAccountFilter] = useState("all");
   const [sortField, setSortField] = useState<SortField>("date_time");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [page, setPage] = useState(1);
@@ -254,7 +269,46 @@ export const LedgerPage = () => {
       }
     };
 
+    const loadAccounts = async () => {
+      setLoadingAccounts(true);
+      try {
+        const loaded: AccountOption[] = [];
+        let currentPage = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+          const res = await api.get(
+            `/accounts?sort=name:asc&pagination[page]=${currentPage}&pagination[pageSize]=${ACCOUNT_FETCH_PAGE_SIZE}`,
+          );
+          const pageData = (res.data?.data ?? []) as Array<{
+            documentId?: string;
+            name?: string;
+          }>;
+          pageData.forEach((item) => {
+            if (item.documentId && item.name) {
+              loaded.push({ documentId: item.documentId, name: item.name });
+            }
+          });
+
+          const pageCount = Number(res.data?.meta?.pagination?.pageCount ?? 1);
+          hasMore = currentPage < pageCount;
+          currentPage += 1;
+        }
+
+        if (!isCancelled) {
+          setAccounts(loaded);
+        }
+      } catch (e) {
+        console.error("Failed to load accounts", e);
+      } finally {
+        if (!isCancelled) {
+          setLoadingAccounts(false);
+        }
+      }
+    };
+
     void loadCategories();
+    void loadAccounts();
 
     return () => {
       isCancelled = true;
@@ -267,6 +321,7 @@ export const LedgerPage = () => {
     debouncedSearchQuery,
     paymentFilter,
     categoryFilter,
+    accountFilter,
     sortField,
     sortDirection,
     pageSize,
@@ -287,6 +342,7 @@ export const LedgerPage = () => {
           search: debouncedSearchQuery,
           paymentFilter,
           categoryFilter,
+          accountFilter,
           sortField,
           sortDirection,
         });
@@ -337,6 +393,7 @@ export const LedgerPage = () => {
     debouncedSearchQuery,
     paymentFilter,
     categoryFilter,
+    accountFilter,
     sortField,
     sortDirection,
     refreshNonce,
@@ -357,6 +414,7 @@ export const LedgerPage = () => {
     setSearchQuery("");
     setPaymentFilter("all");
     setCategoryFilter("all");
+    setAccountFilter("all");
     setSortField("date_time");
     setSortDirection("desc");
     setPage(1);
@@ -390,7 +448,7 @@ export const LedgerPage = () => {
       />
 
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-6">
           <div className="relative xl:col-span-2">
             <Search
               size={16}
@@ -431,6 +489,19 @@ export const LedgerPage = () => {
             ))}
           </select>
 
+          <select
+            value={accountFilter}
+            onChange={(e) => setAccountFilter(e.target.value)}
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none transition-colors focus:border-indigo-500"
+          >
+            <option value="all">All Accounts</option>
+            {accounts.map((account) => (
+              <option key={account.documentId} value={account.documentId}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+
           <div className="flex gap-2">
             <select
               value={sortField}
@@ -463,6 +534,11 @@ export const LedgerPage = () => {
             {loadingCategories && (
               <span className="text-xs text-slate-500">
                 Loading category filters...
+              </span>
+            )}
+            {loadingAccounts && (
+              <span className="text-xs text-slate-500">
+                Loading account filters...
               </span>
             )}
           </div>

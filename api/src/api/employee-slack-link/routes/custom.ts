@@ -5,7 +5,9 @@ export default {
       path: "/slack/financials/command",
       handler: "api::employee-slack-link.employee-slack-link.handleFinancialCommand",
       config: {
-        auth: false,
+        auth: {
+          scope: ["api::employee-slack-link.employee-slack-link.handleFinancialCommand"],
+        },
       },
     },
   ],

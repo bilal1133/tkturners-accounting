@@ -11,6 +11,7 @@ import {
   RefreshCw,
   AlertTriangle,
   Trash2,
+  Search,
 } from "lucide-react";
 import { format } from "date-fns";
 import { LoanModal } from "../components/LoanModal";
@@ -33,18 +34,112 @@ type PayrollSummary = {
   }>;
 };
 
+type LoanRecord = {
+  id: number;
+  status?: string;
+  total_amount?: number | string;
+  remaining_balance?: number | string;
+  monthly_installment?: number | string;
+  employee?: {
+    name?: string;
+    currency?: any;
+  } | null;
+  disbursement_transaction?: {
+    contact?: {
+      name?: string;
+      contact_type?: any[];
+    } | null;
+  } | null;
+};
+
+type LoanView = {
+  loan: LoanRecord;
+  employeeName: string;
+  symbol: string;
+  total: number;
+  remaining: number;
+  monthly: number;
+  percentPaid: number;
+  status: string;
+  searchableText: string;
+};
+
 const formatAmount = (amount: number) =>
   amount.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 
+const toNumber = (value: number | string | null | undefined) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const parseDate = (value: string | null | undefined) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+};
+
+const getTotalNetPay = (batch: PayrollSummary) => {
+  const totals = batch.totals_by_currency || [];
+  if (totals.length > 0) {
+    return totals.reduce((sum, entry) => sum + toNumber(entry.total_net), 0);
+  }
+  return toNumber(batch.total_net_pay);
+};
+
+const getLoanView = (loan: LoanRecord): LoanView => {
+  const fallbackContact = loan.disbursement_transaction?.contact || null;
+  const fallbackEmployeeCurrency = fallbackContact?.contact_type?.find(
+    (entry: any) => entry.__component === "contact-type.employee",
+  )?.currency;
+
+  const employeeName = loan.employee?.name || fallbackContact?.name || "Unknown";
+  const symbol =
+    currencySymbol(loan.employee?.currency) || currencySymbol(fallbackEmployeeCurrency);
+
+  const total = toNumber(loan.total_amount);
+  const remaining = toNumber(loan.remaining_balance);
+  const monthly = toNumber(loan.monthly_installment);
+  const percentPaid = total > 0 ? ((total - remaining) / total) * 100 : 0;
+  const status = String(loan.status || "Active");
+
+  return {
+    loan,
+    employeeName,
+    symbol,
+    total,
+    remaining,
+    monthly,
+    percentPaid,
+    status,
+    searchableText: `${employeeName} ${status}`.toLowerCase(),
+  };
+};
+
 export const PayrollPage = () => {
   const navigate = useNavigate();
   const [payrolls, setPayrolls] = useState<PayrollSummary[]>([]);
-  const [loans, setLoans] = useState<any[]>([]);
+  const [loans, setLoans] = useState<LoanRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingBatchId, setDeletingBatchId] = useState<string | number | null>(null);
+
+  const [payrollSearch, setPayrollSearch] = useState("");
+  const [payrollStatusFilter, setPayrollStatusFilter] = useState("all");
+  const [payrollLedgerFilter, setPayrollLedgerFilter] = useState("all");
+  const [payrollDateFrom, setPayrollDateFrom] = useState("");
+  const [payrollDateTo, setPayrollDateTo] = useState("");
+  const [payrollMinNet, setPayrollMinNet] = useState("");
+  const [payrollMaxNet, setPayrollMaxNet] = useState("");
+
+  const [loanSearch, setLoanSearch] = useState("");
+  const [loanStatusFilter, setLoanStatusFilter] = useState("all");
+  const [loanMinRemaining, setLoanMinRemaining] = useState("");
+  const [loanMaxRemaining, setLoanMaxRemaining] = useState("");
+  const [loanMinMonthly, setLoanMinMonthly] = useState("");
+  const [loanMaxMonthly, setLoanMaxMonthly] = useState("");
 
   const [isLoanModalOpen, setLoanModalOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState<any>(null);
@@ -63,8 +158,8 @@ export const PayrollPage = () => {
           "/loans?populate[0]=disbursement_transaction&populate[1]=disbursement_transaction.contact&populate[2]=disbursement_transaction.contact.contact_type&populate[3]=disbursement_transaction.contact.contact_type.currency",
         ),
       ]);
-      setPayrolls(payRes.data?.data || []);
-      setLoans(loanRes.data?.data || []);
+      setPayrolls((payRes.data?.data || []) as PayrollSummary[]);
+      setLoans((loanRes.data?.data || []) as LoanRecord[]);
     } catch (error) {
       console.error(error);
     } finally {
@@ -89,6 +184,120 @@ export const PayrollPage = () => {
     [payrolls],
   );
 
+  const filteredPayrolls = useMemo(() => {
+    const search = payrollSearch.trim().toLowerCase();
+    const minNet = payrollMinNet.trim() ? toNumber(payrollMinNet) : null;
+    const maxNet = payrollMaxNet.trim() ? toNumber(payrollMaxNet) : null;
+    const dateFrom = parseDate(payrollDateFrom);
+    const dateTo = parseDate(payrollDateTo);
+
+    return sortedPayrolls.filter((batch) => {
+      if (payrollStatusFilter !== "all" && batch.payroll_status !== payrollStatusFilter) {
+        return false;
+      }
+
+      if (payrollLedgerFilter === "synced" && batch.ledger_synced === false) {
+        return false;
+      }
+
+      if (payrollLedgerFilter === "unsynced" && batch.ledger_synced !== false) {
+        return false;
+      }
+
+      const payDate = parseDate(batch.pay_date);
+      if (dateFrom && (!payDate || payDate < dateFrom)) {
+        return false;
+      }
+      if (dateTo && (!payDate || payDate > dateTo)) {
+        return false;
+      }
+
+      const net = getTotalNetPay(batch);
+      if (minNet !== null && net < minNet) {
+        return false;
+      }
+      if (maxNet !== null && net > maxNet) {
+        return false;
+      }
+
+      if (search) {
+        const haystack = [
+          `Payroll Batch ${batch.id}`,
+          batch.payroll_status,
+          batch.pay_period_start,
+          batch.pay_period_end,
+          batch.pay_date,
+          String(batch.total_employees || ""),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        if (!haystack.includes(search)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    sortedPayrolls,
+    payrollSearch,
+    payrollStatusFilter,
+    payrollLedgerFilter,
+    payrollDateFrom,
+    payrollDateTo,
+    payrollMinNet,
+    payrollMaxNet,
+  ]);
+
+  const loanViews = useMemo(() => loans.map((loan) => getLoanView(loan)), [loans]);
+
+  const filteredLoanViews = useMemo(() => {
+    const search = loanSearch.trim().toLowerCase();
+    const minRemaining = loanMinRemaining.trim() ? toNumber(loanMinRemaining) : null;
+    const maxRemaining = loanMaxRemaining.trim() ? toNumber(loanMaxRemaining) : null;
+    const minMonthly = loanMinMonthly.trim() ? toNumber(loanMinMonthly) : null;
+    const maxMonthly = loanMaxMonthly.trim() ? toNumber(loanMaxMonthly) : null;
+
+    return [...loanViews]
+      .filter((entry) => {
+        if (loanStatusFilter !== "all" && entry.status !== loanStatusFilter) {
+          return false;
+        }
+
+        if (minRemaining !== null && entry.remaining < minRemaining) {
+          return false;
+        }
+
+        if (maxRemaining !== null && entry.remaining > maxRemaining) {
+          return false;
+        }
+
+        if (minMonthly !== null && entry.monthly < minMonthly) {
+          return false;
+        }
+
+        if (maxMonthly !== null && entry.monthly > maxMonthly) {
+          return false;
+        }
+
+        if (search && !entry.searchableText.includes(search)) {
+          return false;
+        }
+
+        return true;
+      })
+      .sort((left, right) => right.remaining - left.remaining);
+  }, [
+    loanViews,
+    loanSearch,
+    loanStatusFilter,
+    loanMinRemaining,
+    loanMaxRemaining,
+    loanMinMonthly,
+    loanMaxMonthly,
+  ]);
+
   const deleteDraftBatch = async (batch: PayrollSummary) => {
     const targetId = batch.documentId || batch.id;
     if (!targetId || batch.payroll_status !== "draft") return;
@@ -109,6 +318,30 @@ export const PayrollPage = () => {
       setDeletingBatchId(null);
     }
   };
+
+  const resetPayrollFilters = () => {
+    setPayrollSearch("");
+    setPayrollStatusFilter("all");
+    setPayrollLedgerFilter("all");
+    setPayrollDateFrom("");
+    setPayrollDateTo("");
+    setPayrollMinNet("");
+    setPayrollMaxNet("");
+  };
+
+  const resetLoanFilters = () => {
+    setLoanSearch("");
+    setLoanStatusFilter("all");
+    setLoanMinRemaining("");
+    setLoanMaxRemaining("");
+    setLoanMinMonthly("");
+    setLoanMaxMonthly("");
+  };
+
+  const loanStatuses = useMemo(() => {
+    const statusSet = new Set(loanViews.map((entry) => entry.status));
+    return Array.from(statusSet).sort();
+  }, [loanViews]);
 
   return (
     <div className="space-y-8 text-slate-200">
@@ -135,14 +368,94 @@ export const PayrollPage = () => {
               <Plus size={16} /> Create Draft
             </button>
           </div>
+
+          <div className="p-4 border-b border-slate-800 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="relative sm:col-span-2">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                />
+                <input
+                  value={payrollSearch}
+                  onChange={(event) => setPayrollSearch(event.target.value)}
+                  placeholder="Search by batch id, date, status..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none transition-colors focus:border-indigo-500"
+                />
+              </div>
+
+              <select
+                value={payrollStatusFilter}
+                onChange={(event) => setPayrollStatusFilter(event.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              >
+                <option value="all">All Statuses</option>
+                <option value="draft">Draft</option>
+                <option value="processed">Processed</option>
+              </select>
+
+              <select
+                value={payrollLedgerFilter}
+                onChange={(event) => setPayrollLedgerFilter(event.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              >
+                <option value="all">All Ledger States</option>
+                <option value="synced">Ledger Synced</option>
+                <option value="unsynced">Ledger Unsynced</option>
+              </select>
+
+              <input
+                type="date"
+                value={payrollDateFrom}
+                onChange={(event) => setPayrollDateFrom(event.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+              <input
+                type="date"
+                value={payrollDateTo}
+                onChange={(event) => setPayrollDateTo(event.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={payrollMinNet}
+                onChange={(event) => setPayrollMinNet(event.target.value)}
+                placeholder="Min net pay"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={payrollMaxNet}
+                onChange={(event) => setPayrollMaxNet(event.target.value)}
+                placeholder="Max net pay"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>{filteredPayrolls.length} payroll batch(es)</span>
+              <button
+                onClick={resetPayrollFilters}
+                className="text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                Reset payroll filters
+              </button>
+            </div>
+          </div>
+
           <div className="p-4 flex-1">
             {loading ? (
               <p className="text-slate-500">Loading...</p>
-            ) : sortedPayrolls.length === 0 ? (
-              <p className="text-slate-500">No payroll batches found.</p>
+            ) : filteredPayrolls.length === 0 ? (
+              <p className="text-slate-500">No payroll batches match the current filters.</p>
             ) : (
-              <div className="space-y-3">
-                {sortedPayrolls.map((batch) => {
+              <div className="space-y-3 max-h-[68vh] overflow-y-auto pr-1">
+                {filteredPayrolls.map((batch) => {
                   const totals = batch.totals_by_currency || [];
                   const totalEmployees = batch.total_employees || 0;
 
@@ -153,9 +466,7 @@ export const PayrollPage = () => {
                     >
                       <div className="flex justify-between items-start mb-3 gap-2">
                         <div>
-                          <h3 className="font-semibold text-slate-200">
-                            Payroll Batch #{batch.id}
-                          </h3>
+                          <h3 className="font-semibold text-slate-200">Payroll Batch #{batch.id}</h3>
                           <p className="text-xs text-slate-500 mt-1">
                             {format(new Date(batch.pay_period_start), "MMM dd")} -{" "}
                             {format(new Date(batch.pay_period_end), "MMM dd, yyyy")}
@@ -189,17 +500,16 @@ export const PayrollPage = () => {
                           <>
                             <div className="font-medium text-slate-200">Total Net Pay:</div>
                             <div className="text-right font-bold text-indigo-400 font-mono text-lg">
-                              {formatAmount(Number(batch.total_net_pay || 0))}
+                              {formatAmount(toNumber(batch.total_net_pay))}
                             </div>
                           </>
                         ) : (
                           totals.map((entry, index) => (
                             <div key={`row-${batch.id}-${index}`} className="contents">
-                              <div className="font-medium text-slate-200">
-                                Net Pay ({entry.symbol || ""})
-                              </div>
+                              <div className="font-medium text-slate-200">Net Pay ({entry.symbol || ""})</div>
                               <div className="text-right font-bold text-indigo-400 font-mono">
-                                {entry.symbol || ""}{formatAmount(Number(entry.total_net || 0))}
+                                {entry.symbol || ""}
+                                {formatAmount(toNumber(entry.total_net))}
                               </div>
                             </div>
                           ))
@@ -240,7 +550,7 @@ export const PayrollPage = () => {
           <div className="p-4 border-b border-slate-800 flex justify-between items-center">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <CreditCard size={18} className="text-purple-400" />
-              Active Loans
+              Loans
             </h2>
             <button
               onClick={() => {
@@ -253,26 +563,97 @@ export const PayrollPage = () => {
               <Plus size={16} /> Disburse Loan
             </button>
           </div>
+
+          <div className="p-4 border-b border-slate-800 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="relative sm:col-span-2">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                />
+                <input
+                  value={loanSearch}
+                  onChange={(event) => setLoanSearch(event.target.value)}
+                  placeholder="Search by employee or status..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none transition-colors focus:border-indigo-500"
+                />
+              </div>
+
+              <select
+                value={loanStatusFilter}
+                onChange={(event) => setLoanStatusFilter(event.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              >
+                <option value="all">All Statuses</option>
+                {loanStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={loanMinRemaining}
+                onChange={(event) => setLoanMinRemaining(event.target.value)}
+                placeholder="Min remaining"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={loanMaxRemaining}
+                onChange={(event) => setLoanMaxRemaining(event.target.value)}
+                placeholder="Max remaining"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={loanMinMonthly}
+                onChange={(event) => setLoanMinMonthly(event.target.value)}
+                placeholder="Min monthly"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={loanMaxMonthly}
+                onChange={(event) => setLoanMaxMonthly(event.target.value)}
+                placeholder="Max monthly"
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>{filteredLoanViews.length} loan(s)</span>
+              <button
+                onClick={resetLoanFilters}
+                className="text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                Reset loan filters
+              </button>
+            </div>
+          </div>
+
           <div className="p-4 flex-1">
             {loading ? (
               <p className="text-slate-500">Loading...</p>
+            ) : filteredLoanViews.length === 0 ? (
+              <p className="text-slate-500">No loans match the current filters.</p>
             ) : (
-              <div className="space-y-4">
-                {loans.map((loan) => {
-                  const fallbackContact = loan.disbursement_transaction?.contact || null;
-                  const fallbackEmployeeCurrency = fallbackContact?.contact_type?.find(
-                    (entry: any) => entry.__component === "contact-type.employee",
-                  )?.currency;
-
-                  const employeeName = loan.employee?.name || fallbackContact?.name || "Unknown";
-                  const symbol =
-                    currencySymbol(loan.employee?.currency) ||
-                    currencySymbol(fallbackEmployeeCurrency);
-
-                  const total = Number(loan.total_amount || 0);
-                  const remaining = Number(loan.remaining_balance || 0);
-                  const monthly = Number(loan.monthly_installment || 0);
-                  const percentPaid = total > 0 ? ((total - remaining) / total) * 100 : 0;
+              <div className="space-y-4 max-h-[68vh] overflow-y-auto pr-1">
+                {filteredLoanViews.map((entry) => {
+                  const { loan, employeeName, symbol, total, remaining, monthly, percentPaid } =
+                    entry;
 
                   return (
                     <div
@@ -306,8 +687,8 @@ export const PayrollPage = () => {
                           </button>
                         </div>
                         <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-slate-800 font-medium border border-slate-700">
-                          {getStatusIcon(loan.status)}
-                          {loan.status}
+                          {getStatusIcon(entry.status)}
+                          {entry.status}
                         </span>
                       </div>
 

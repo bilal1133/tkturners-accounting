@@ -22,6 +22,9 @@ const CUSTOM_FINANCE_ACTIONS = [
   "api::payroll.payroll.process",
   "api::payroll.payroll.exportCsv",
   "api::payroll.payroll.findOneDetailed",
+  "api::transaction.transaction.ledgerList",
+  "api::transaction.transaction.dashboardReport",
+  "api::employee-slack-link.employee-slack-link.handleFinancialCommand",
 ];
 
 const FINANCE_ADMIN_ACTIONS = [...new Set([...CORE_FINANCE_ACTIONS, ...CUSTOM_FINANCE_ACTIONS])];

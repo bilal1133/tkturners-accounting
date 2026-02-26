@@ -1,5 +1,11 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Link,
+  Navigate,
+} from "react-router-dom";
 import { Home, Wallet, Users, Banknote, Landmark, Coins } from "lucide-react";
 import { LedgerPage } from "./pages/Ledger";
 import { ContactsPage } from "./pages/Contacts";
@@ -113,7 +119,25 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }
 
   if (!jwt) {
-    return <LoginPage />;
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+const PublicRoute = ({ children }: { children: React.ReactNode }) => {
+  const { jwt, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-950 text-slate-400">
+        Loading auth state...
+      </div>
+    );
+  }
+
+  if (jwt) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
@@ -124,7 +148,14 @@ function App() {
     <Router>
       <AuthProvider>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/login"
+            element={
+              <PublicRoute>
+                <LoginPage />
+              </PublicRoute>
+            }
+          />
           <Route
             path="/*"
             element={
