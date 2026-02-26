@@ -201,24 +201,93 @@ export const ContactDetailsPage = () => {
           )}
 
           {employeeData && (
-            <div className="mt-6 pt-4 border-t border-slate-800">
-              <p className="text-xs text-slate-500 font-medium tracking-wide uppercase">
-                Employee File
-              </p>
+            <div className="mt-6 pt-4 border-t border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-500 font-medium tracking-wide uppercase">
+                  Employee File
+                </p>
+                {employeeData.active !== undefined && (
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+                      employeeData.active
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        : "bg-red-500/10 text-red-400 border border-red-500/20"
+                    }`}
+                  >
+                    {employeeData.active ? "Active" : "Inactive"}
+                  </span>
+                )}
+              </div>
+
               {employeeData.position && (
-                <p className="text-sm text-slate-300 mt-2">
-                  Role: {employeeData.position}
+                <p className="text-sm text-slate-300">
+                  <span className="text-slate-500 mr-2">Role:</span>
+                  {employeeData.position}
+                  {employeeData.department && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded bg-slate-800 text-xs text-slate-400 border border-slate-700">
+                      {employeeData.department}
+                    </span>
+                  )}
                 </p>
               )}
+
               {employeeData.salary && (
-                <p className="text-lg font-semibold text-white mt-1">
+                <p className="text-lg font-semibold text-white">
                   Base Salary:{" "}
                   {parseFloat(employeeData.salary).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
                   })}{" "}
-                  / mo
+                  <span className="text-sm text-slate-400 font-normal">
+                    / mo
+                  </span>
                 </p>
               )}
+
+              <div className="grid grid-cols-2 gap-y-2 gap-x-4 pt-3 mt-3 border-t border-slate-800/50">
+                {employeeData.cnic && (
+                  <div className="text-xs">
+                    <span className="block text-slate-500 mb-0.5">CNIC</span>
+                    <span className="text-slate-300 font-mono">
+                      {employeeData.cnic}
+                    </span>
+                  </div>
+                )}
+                {employeeData.joining_date && (
+                  <div className="text-xs">
+                    <span className="block text-slate-500 mb-0.5">Joined</span>
+                    <span className="text-slate-300">
+                      {format(
+                        new Date(employeeData.joining_date),
+                        "MMM d, yyyy",
+                      )}
+                    </span>
+                  </div>
+                )}
+                {employeeData.fuel_allowance && (
+                  <div className="text-xs">
+                    <span className="block text-slate-500 mb-0.5">Fuel</span>
+                    <span className="text-slate-300">
+                      ${parseFloat(employeeData.fuel_allowance).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                {employeeData.rental_allowance && (
+                  <div className="text-xs">
+                    <span className="block text-slate-500 mb-0.5">Rental</span>
+                    <span className="text-slate-300">
+                      ${parseFloat(employeeData.rental_allowance).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                {employeeData.gym_allowance && (
+                  <div className="text-xs">
+                    <span className="block text-slate-500 mb-0.5">Gym</span>
+                    <span className="text-slate-300">
+                      ${parseFloat(employeeData.gym_allowance).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           {customerData && (
