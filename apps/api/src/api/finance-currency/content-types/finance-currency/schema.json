@@ -1,0 +1,34 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_currencies",
+  "info": {
+    "singularName": "finance-currency",
+    "pluralName": "finance-currencies",
+    "displayName": "Finance Currency",
+    "description": "Supported currencies"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "code": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "decimals": {
+      "type": "integer",
+      "required": true,
+      "default": 2
+    },
+    "active": {
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

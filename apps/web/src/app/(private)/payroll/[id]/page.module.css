@@ -1,0 +1,298 @@
+.snapshotCard {
+  gap: var(--space-3);
+}
+
+.snapshotHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.58rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.statusDraft {
+  background: var(--tag-pending-bg);
+  color: var(--warn);
+}
+
+.statusApproved {
+  background: var(--tag-approved-bg);
+  color: var(--tag-approved-text);
+}
+
+.statusPaid {
+  background: var(--status-paid-bg);
+  color: var(--status-paid-text);
+}
+
+.snapshotGrid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.snapshotItem {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: var(--space-3);
+  display: grid;
+  gap: 0.3rem;
+}
+
+.snapshotLabel {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.snapshotValue {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.defaultsCard {
+  gap: var(--space-3);
+}
+
+.defaultsGrid {
+  grid-template-columns: minmax(260px, 420px);
+}
+
+.defaultAccountSelect {
+  min-width: 260px;
+}
+
+.defaultsHint {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+  max-width: 84ch;
+}
+
+.payrollTableWrap {
+  overflow: auto;
+  gap: 0;
+}
+
+.payrollTable {
+  min-width: 2150px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.payrollTable th,
+.payrollTable td {
+  white-space: nowrap;
+}
+
+.payrollTable tbody tr:hover td {
+  background: var(--table-row-hover);
+}
+
+.payrollTable th:first-child,
+.payrollTable td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg-elevated);
+  box-shadow: 1px 0 0 var(--line);
+}
+
+.payrollTable th:last-child,
+.payrollTable td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--bg-elevated);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+.payrollTable thead th:first-child,
+.payrollTable thead th:last-child {
+  z-index: 3;
+}
+
+.employeeCell {
+  min-width: 190px;
+  white-space: normal;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.employeeName {
+  font-weight: 600;
+}
+
+.employeeMeta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.departmentCell {
+  min-width: 140px;
+  white-space: normal;
+}
+
+.amountCell {
+  min-width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+
+.loanCell {
+  min-width: 180px;
+  white-space: normal;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.loanMeta {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.loanToggleCell {
+  min-width: 128px;
+}
+
+.loanToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.loanToggleLabel input {
+  width: auto;
+}
+
+.loanInputCell {
+  min-width: 150px;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.loanSaving {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.accountSelect {
+  min-width: 178px;
+}
+
+.compactInput {
+  min-width: 120px;
+}
+
+.fxInput {
+  min-width: 96px;
+}
+
+.extraFeeCell {
+  min-width: 195px;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.previewText {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: normal;
+  max-width: 240px;
+}
+
+.previewError {
+  color: var(--danger);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: normal;
+  max-width: 240px;
+}
+
+.noteInput {
+  min-width: 180px;
+}
+
+.linkedCell {
+  min-width: 250px;
+  white-space: normal;
+}
+
+.linkedList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.linkedPill {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.73rem;
+  line-height: 1.3;
+}
+
+.editButton {
+  min-width: 72px;
+}
+
+.rowLocked td,
+.rowLocked:hover td {
+  background: var(--row-locked);
+}
+
+.infoCard {
+  gap: var(--space-2);
+}
+
+.infoLabel {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.infoValue {
+  margin: 0;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .snapshotGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .defaultsGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .defaultAccountSelect,
+  .accountSelect {
+    min-width: 150px;
+  }
+
+  .compactInput {
+    min-width: 96px;
+  }
+
+  .noteInput {
+    min-width: 150px;
+  }
+}

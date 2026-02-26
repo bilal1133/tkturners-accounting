@@ -1,0 +1,41 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_audit_logs",
+  "info": {
+    "singularName": "finance-audit-log",
+    "pluralName": "finance-audit-logs",
+    "displayName": "Finance Audit Log",
+    "description": "Immutable audit events"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "workspace_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "actor_user_id": {
+      "type": "biginteger"
+    },
+    "entity_type": {
+      "type": "string",
+      "required": true
+    },
+    "entity_id": {
+      "type": "string",
+      "required": true
+    },
+    "action": {
+      "type": "string",
+      "required": true
+    },
+    "before_json": {
+      "type": "json"
+    },
+    "after_json": {
+      "type": "json"
+    }
+  }
+}

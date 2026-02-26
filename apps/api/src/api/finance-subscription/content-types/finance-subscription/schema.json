@@ -1,0 +1,65 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_subscriptions",
+  "info": {
+    "singularName": "finance-subscription",
+    "pluralName": "finance-subscriptions",
+    "displayName": "Finance Subscription",
+    "description": "Recurring expenses"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "workspace_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "vendor_counterparty_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "amount_minor": {
+      "type": "biginteger",
+      "required": true
+    },
+    "currency": {
+      "type": "string",
+      "required": true
+    },
+    "account_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "category_id": {
+      "type": "biginteger",
+      "required": true
+    },
+    "frequency": {
+      "type": "enumeration",
+      "enum": ["MONTHLY", "ANNUAL", "CUSTOM"],
+      "required": true
+    },
+    "interval_count": {
+      "type": "integer",
+      "required": true,
+      "default": 1
+    },
+    "next_run_date": {
+      "type": "date",
+      "required": true
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "created_by_user_id": {
+      "type": "biginteger",
+      "required": true
+    }
+  }
+}

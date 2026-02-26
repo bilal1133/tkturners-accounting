@@ -1,0 +1,30 @@
+{
+  "kind": "collectionType",
+  "collectionName": "finance_loan_repayments",
+  "info": {
+    "singularName": "finance-loan-repayment",
+    "pluralName": "finance-loan-repayments",
+    "displayName": "Finance Loan Repayment",
+    "description": "Loan repayment postings"
+  },
+  "options": { "draftAndPublish": false },
+  "pluginOptions": {},
+  "attributes": {
+    "workspace_id": { "type": "biginteger", "required": true },
+    "loan_id": { "type": "biginteger", "required": true },
+    "employee_id": { "type": "biginteger", "required": true },
+    "repayment_date": { "type": "date", "required": true },
+    "source": {
+      "type": "enumeration",
+      "enum": ["PAYROLL", "MANUAL"],
+      "required": true
+    },
+    "principal_paid_minor": { "type": "biginteger", "required": true, "default": 0 },
+    "interest_paid_minor": { "type": "biginteger", "required": true, "default": 0 },
+    "total_paid_minor": { "type": "biginteger", "required": true },
+    "principal_transfer_transaction_id": { "type": "biginteger" },
+    "interest_income_transaction_id": { "type": "biginteger" },
+    "linked_payroll_entry_id": { "type": "biginteger" },
+    "created_by_user_id": { "type": "biginteger", "required": true }
+  }
+}
