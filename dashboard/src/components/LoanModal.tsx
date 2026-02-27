@@ -307,7 +307,9 @@ export const LoanModal = ({
     try {
       const [empRes, accRes, txRes] = await Promise.all([
         // Fetch all contacts, we will manual filter the employees
-        api.get("/contacts?populate[0]=contact_type&populate[1]=contact_type.currency"),
+        api.get(
+          "/contacts?populate[0]=contact_type&populate[1]=contact_type.currency&pagination[pageSize]=500&status=published",
+        ),
         api.get("/accounts?populate=*"),
         api.get(
           "/transactions?populate[0]=type.account&populate[1]=type.to_account&populate[2]=type.from_account&pagination[pageSize]=1000",

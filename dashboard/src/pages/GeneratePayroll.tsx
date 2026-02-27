@@ -109,7 +109,9 @@ export const GeneratePayrollPage = () => {
     setLoading(true);
     try {
       const [empRes, loanRes, accountRes] = await Promise.all([
-        api.get("/contacts?populate[0]=contact_type&populate[1]=contact_type.currency"),
+        api.get(
+          "/contacts?populate[0]=contact_type&populate[1]=contact_type.currency&pagination[pageSize]=500&status=published",
+        ),
         api.get("/loans?filters[status][$eq]=Active&populate=*"),
         api.get("/accounts?populate=currency"),
       ]);

@@ -21,7 +21,7 @@ export const ContactsPage = () => {
     setLoading(true);
     try {
       const [contRes, projRes] = await Promise.all([
-        api.get("/contacts?populate=*"),
+        api.get("/contacts?populate=*&pagination[pageSize]=500&status=published"),
         api.get("/projects?populate=*"),
       ]);
       setContacts(contRes.data.data);

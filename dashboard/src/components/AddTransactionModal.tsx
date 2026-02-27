@@ -34,7 +34,7 @@ export const AddTransactionModal = ({
   const loadLookups = async () => {
     try {
       const [conRes, projRes, catRes, accRes, curRes] = await Promise.all([
-        api.get("/contacts"),
+        api.get("/contacts?pagination[pageSize]=500&status=published"),
         api.get("/projects"),
         api.get("/categories"),
         api.get("/accounts"),
