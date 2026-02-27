@@ -44,13 +44,16 @@ export default factories.createCoreController(
       const raw = String(identifier ?? "").trim();
       if (!raw) return null;
 
-      // Try as documentId first.
-      const asDocument = await strapi.entityService.findMany("api::contact.contact", {
-        filters: { documentId: raw },
-        limit: 1,
-        populate: ["contact_type", "contact_type.loans", "contact_type.currency"],
-      } as any);
-      if (asDocument?.[0]) return asDocument[0];
+      // Try as document_id via DB first (most reliable across Strapi v5 APIs).
+      const byDocumentRow = await strapi.db.connection("contacts")
+        .where({ document_id: raw })
+        .orderBy("updated_at", "desc")
+        .first();
+      if (byDocumentRow?.id) {
+        return strapi.entityService.findOne("api::contact.contact", byDocumentRow.id, {
+          populate: ["contact_type", "contact_type.loans", "contact_type.currency"],
+        });
+      }
 
       // Then try as numeric row id.
       const asId = Number(raw);
