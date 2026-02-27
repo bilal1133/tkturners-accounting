@@ -7,6 +7,7 @@ export default factories.createCoreController(
       uid: string,
       id: number | string,
       existing?: any,
+      options?: { forcePublish?: boolean },
     ) => {
       const entry =
         existing ??
@@ -15,7 +16,24 @@ export default factories.createCoreController(
         }));
 
       if (!entry) return null;
-      if (entry.publishedAt) return entry;
+      const shouldForcePublish = options?.forcePublish === true;
+      if (entry.publishedAt && !shouldForcePublish) return entry;
+
+      const documentId = entry.documentId;
+      if (documentId && typeof (strapi as any).documents === "function") {
+        try {
+          await (strapi as any).documents(uid).publish({
+            documentId,
+          });
+        } catch (_error) {
+          // Fallback below for environments where document publish API isn't available.
+        }
+      }
+
+      const refreshed = await (strapi.entityService as any).findOne(uid, id, {
+        fields: ["id", "documentId", "publishedAt"],
+      });
+      if (refreshed?.publishedAt) return refreshed;
 
       return (strapi.entityService as any).update(uid, id, {
         data: { publishedAt: new Date() },
@@ -417,6 +435,7 @@ export default factories.createCoreController(
                 },
               },
             );
+            await ensurePublished("api::transaction.transaction", transaction.id);
           } catch (txError: any) {
             console.error(
               "Error creating disbursement transaction:",
@@ -435,6 +454,7 @@ export default factories.createCoreController(
               disbursement_transaction: transaction.id,
             },
           });
+          await ensurePublished("api::loan.loan", loan.id);
 
           // 5. Update the Employee's dynamic zone to inject the new Loan
           const updatedContactType = [...(employeeContact as any).contact_type];
@@ -480,6 +500,12 @@ export default factories.createCoreController(
                 contact_type: updatedContactType,
               },
             },
+          );
+          await ensurePublished(
+            "api::contact.contact",
+            (employeeContact as any).id || employeeId,
+            undefined,
+            { forcePublish: true },
           );
 
           return ctx.send({
@@ -696,6 +722,7 @@ export default factories.createCoreController(
                 data: txData,
               },
             );
+            await ensurePublished("api::transaction.transaction", repaymentTx.id);
           } catch (repayError: any) {
             console.error("Error creating repayment transaction:", repayError.message);
             throw repayError;
@@ -715,6 +742,12 @@ export default factories.createCoreController(
                 status: newStatus,
               },
             },
+          );
+          await ensurePublished(
+            "api::loan.loan",
+            loanId,
+            undefined,
+            { forcePublish: true },
           );
 
           return ctx.send({
