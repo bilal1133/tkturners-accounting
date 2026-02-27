@@ -3,27 +3,6 @@ const configuredOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
   .map((entry) => entry.trim())
   .filter(Boolean);
 
-function resolveCorsOrigin(ctx) {
-  const requestOrigin = ctx.request.header.origin;
-  if (!requestOrigin) {
-    return false;
-  }
-
-  if (configuredOrigins.includes(requestOrigin)) {
-    return requestOrigin;
-  }
-
-  if (/^https?:\/\/localhost(?::\d+)?$/i.test(requestOrigin)) {
-    return requestOrigin;
-  }
-
-  if (/^https?:\/\/127\.0\.0\.1(?::\d+)?$/i.test(requestOrigin)) {
-    return requestOrigin;
-  }
-
-  return false;
-}
-
 module.exports = [
   'strapi::logger',
   'strapi::errors',
@@ -64,7 +43,7 @@ module.exports = [
   {
     name: 'strapi::cors',
     config: {
-      origin: resolveCorsOrigin,
+      origin: configuredOrigins,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
       headers: ['Content-Type', 'Authorization', 'Origin', 'Accept', 'X-Cron-Secret'],
       credentials: true,
