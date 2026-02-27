@@ -17,7 +17,7 @@ export default factories.createCoreController(
 
       if (!entry) return null;
       const shouldForcePublish = options?.forcePublish === true;
-      if (entry.publishedAt && !shouldForcePublish) return entry;
+      if (entry.publishedAt && entry.documentId && !shouldForcePublish) return entry;
 
       const documentId = entry.documentId;
       if (documentId && typeof (strapi as any).documents === "function") {
@@ -38,6 +38,32 @@ export default factories.createCoreController(
       return (strapi.entityService as any).update(uid, id, {
         data: { publishedAt: new Date() },
       });
+    };
+
+    const resolveContact = async (identifier: string | number) => {
+      const raw = String(identifier ?? "").trim();
+      if (!raw) return null;
+
+      // Try as documentId first.
+      const asDocument = await strapi.entityService.findMany("api::contact.contact", {
+        filters: { documentId: raw },
+        limit: 1,
+        populate: ["contact_type", "contact_type.loans", "contact_type.currency"],
+      } as any);
+      if (asDocument?.[0]) return asDocument[0];
+
+      // Then try as numeric row id.
+      const asId = Number(raw);
+      if (Number.isFinite(asId)) {
+        const asNumeric = await strapi.entityService.findMany("api::contact.contact", {
+          filters: { id: asId },
+          limit: 1,
+          populate: ["contact_type", "contact_type.loans", "contact_type.currency"],
+        } as any);
+        if (asNumeric?.[0]) return asNumeric[0];
+      }
+
+      return null;
     };
 
     const getOrCreateLoanCategory = async () => {
@@ -348,17 +374,7 @@ export default factories.createCoreController(
           }
 
           // 1. Fetch the Employee Contact
-          const employeeContact = await strapi.entityService.findOne(
-            "api::contact.contact",
-            employeeId,
-            {
-              populate: [
-                "contact_type",
-                "contact_type.loans",
-                "contact_type.currency",
-              ],
-            },
-          );
+          const employeeContact = await resolveContact(employeeId);
 
           if (!employeeContact) {
             return ctx.notFound("Employee not found");
@@ -584,15 +600,11 @@ export default factories.createCoreController(
           // 1b. Fetch employee contact and normalize to documentId relation
           let employeeContactDocumentId: string | null = null;
           if (employeeId) {
-            const employeeContact = await strapi.entityService.findOne(
-              "api::contact.contact",
-              employeeId,
-              { fields: ["id", "documentId", "publishedAt"] } as any,
-            );
+            const employeeContact = await resolveContact(employeeId);
             if (employeeContact) {
               const publishedEmployeeContact = await ensurePublished(
                 "api::contact.contact",
-                employeeId,
+                employeeContact.id,
                 employeeContact,
               );
               employeeContactDocumentId =
