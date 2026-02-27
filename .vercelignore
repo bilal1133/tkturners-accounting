@@ -1,0 +1,5 @@
+# Deploy only the dashboard SPA from this monorepo
+*
+!dashboard/**
+!vercel.json
+!.vercelignore

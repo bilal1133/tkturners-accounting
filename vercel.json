@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "cd dashboard && yarn install --frozen-lockfile",
-  "buildCommand": "cd dashboard && yarn build",
+  "installCommand": "cd dashboard && npm ci",
+  "buildCommand": "cd dashboard && npm run build",
   "outputDirectory": "dashboard/dist",
   "rewrites": [
     {
