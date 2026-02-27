@@ -176,14 +176,18 @@ async function ensureUsersAndMemberships(strapiInstance, workspaceId) {
       password: resolveSeedPassword('FINANCE_SEED_ADMIN_PASSWORD_1'),
     },
     {
-      email: process.env.FINANCE_SEED_ADMIN_EMAIL_2 || 'cofounder@tkturners.com',
-      username: process.env.FINANCE_SEED_ADMIN_USERNAME_2 || 'cofounder',
-      password: resolveSeedPassword('FINANCE_SEED_ADMIN_PASSWORD_2'),
+      email: 'amin@tkturners.com',
+      username: 'amin',
+      password:
+        process.env.FINANCE_SEED_ADMIN_PASSWORD_AMIN ||
+        process.env.FINANCE_SEED_ADMIN_PASSWORD_2 ||
+        resolveSeedPassword('FINANCE_SEED_ADMIN_PASSWORD_1'),
     },
   ];
 
   const userService = strapiInstance.plugin('users-permissions').service('user');
   let firstUserId = null;
+  let bilalUserId = null;
 
   for (const seed of seedUsers) {
     let user = await knex('up_users').whereRaw('LOWER(email) = LOWER(?)', [seed.email]).first();
@@ -209,6 +213,10 @@ async function ensureUsersAndMemberships(strapiInstance, workspaceId) {
       firstUserId = user.id;
     }
 
+    if (String(seed.email).toLowerCase() === 'bilal@tkturners.com') {
+      bilalUserId = user.id;
+    }
+
     await knex('finance_workspace_members')
       .insert({
         workspace_id: workspaceId,
@@ -221,7 +229,10 @@ async function ensureUsersAndMemberships(strapiInstance, workspaceId) {
       .merge({ role: 'ADMIN', updated_at: now });
   }
 
-  return firstUserId;
+  return {
+    firstUserId,
+    bilalUserId: bilalUserId || firstUserId,
+  };
 }
 
 async function ensureSystemAccounts(knex, workspace, creatorUserId) {
@@ -257,14 +268,79 @@ async function ensureSystemAccounts(knex, workspace, creatorUserId) {
     });
 }
 
+function toMinorUnits(amount) {
+  return Math.round(Number(amount || 0) * 100);
+}
+
+async function ensureBilalAccounts(knex, workspace, creatorUserId, bilalUserId) {
+  if (!creatorUserId || !bilalUserId) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const requiredAccounts = [
+    { name: 'Bilal - Wise - EUR', currency: 'EUR', opening_balance_minor: toMinorUnits(4668.89) },
+    { name: 'Bilal - Wise - USD', currency: 'USD', opening_balance_minor: toMinorUnits(136.63) },
+    { name: 'Bilal - Wise - PKR', currency: 'PKR', opening_balance_minor: toMinorUnits(23281.29) },
+    { name: 'Bilal - Wise - GBP', currency: 'GBP', opening_balance_minor: 0 },
+    { name: 'Bilal - Payoneer - USD', currency: 'USD', opening_balance_minor: 0 },
+    { name: 'Bilal - Payoneer - EUR', currency: 'EUR', opening_balance_minor: toMinorUnits(6.1) },
+    { name: 'Bilal - Payoneer - GBP', currency: 'GBP', opening_balance_minor: 0 },
+  ];
+
+  for (const account of requiredAccounts) {
+    await knex('finance_accounts')
+      .insert({
+        workspace_id: workspace.id,
+        name: account.name,
+        owner_user_id: bilalUserId,
+        currency: account.currency,
+        opening_balance_minor: account.opening_balance_minor,
+        notes: null,
+        is_active: true,
+        account_kind: 'CASH',
+        is_system: false,
+        created_by_user_id: creatorUserId,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflict(['workspace_id', 'name'])
+      .merge({
+        owner_user_id: bilalUserId,
+        currency: account.currency,
+        opening_balance_minor: account.opening_balance_minor,
+        is_active: true,
+        account_kind: 'CASH',
+        is_system: false,
+        updated_at: now,
+      });
+  }
+}
+
+async function ensureBilalOwnsExistingAccounts(knex, workspaceId, bilalUserId) {
+  if (!workspaceId || !bilalUserId) {
+    return;
+  }
+
+  await knex('finance_accounts')
+    .where({ workspace_id: workspaceId, is_system: false })
+    .whereNot({ owner_user_id: bilalUserId })
+    .update({
+      owner_user_id: bilalUserId,
+      updated_at: new Date().toISOString(),
+    });
+}
+
 async function seedBaseData(strapiInstance) {
   const knex = strapiInstance.db.connection;
 
   await ensureCurrencies(knex);
   const workspace = await ensureWorkspace(knex);
   await ensureSystemCategories(knex, workspace.id);
-  const firstUserId = await ensureUsersAndMemberships(strapiInstance, workspace.id);
+  const { firstUserId, bilalUserId } = await ensureUsersAndMemberships(strapiInstance, workspace.id);
   await ensureSystemAccounts(knex, workspace, firstUserId);
+  await ensureBilalAccounts(knex, workspace, firstUserId, bilalUserId);
+  await ensureBilalOwnsExistingAccounts(knex, workspace.id, bilalUserId);
 
   strapiInstance.log.info('Finance seed data ready');
 }
