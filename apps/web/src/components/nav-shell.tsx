@@ -47,6 +47,18 @@ export function NavShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth > 980) {
+        setMobileNavOpen(false);
+      }
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
     if (!mobileNavOpen) {
       return;
     }

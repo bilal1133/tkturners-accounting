@@ -12,3 +12,9 @@
 .progressCell {
   min-width: 180px;
 }
+
+@media (max-width: 720px) {
+  .progressCell {
+    min-width: 130px;
+  }
+}

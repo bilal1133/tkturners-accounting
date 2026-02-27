@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Fraunces, Space_Grotesk } from 'next/font/google';
 
 import './globals.css';
@@ -19,6 +19,12 @@ const body = Space_Grotesk({
 export const metadata: Metadata = {
   title: 'TkTurners Finance Ops',
   description: 'Private finance ops workspace for founders',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({
