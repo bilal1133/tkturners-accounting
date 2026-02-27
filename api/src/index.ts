@@ -115,7 +115,15 @@ export default {
 
       await ensurePermissions(strapi, financeAdminRole.id, FINANCE_ADMIN_ACTIONS);
 
-      const roleTypesToRestrict = ["public", "authenticated", employeeSelfServiceRole.type];
+      const authenticatedRole = (await roleQuery.findOne({
+        where: { type: "authenticated" },
+      })) as RoleRecord | null;
+
+      if (authenticatedRole) {
+        await ensurePermissions(strapi, authenticatedRole.id, FINANCE_ADMIN_ACTIONS);
+      }
+
+      const roleTypesToRestrict = ["public", employeeSelfServiceRole.type];
 
       for (const roleType of roleTypesToRestrict) {
         const role = (await roleQuery.findOne({
@@ -127,7 +135,7 @@ export default {
       }
 
       strapi.log.info(
-        "Permissions bootstrap complete: finance-admin seeded; public/authenticated/employee-self-service restricted from finance APIs.",
+        "Permissions bootstrap complete: finance-admin + authenticated seeded; public/employee-self-service restricted from finance APIs.",
       );
     } catch (error) {
       strapi.log.error("Could not apply role policy bootstrap:", error);
