@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import type { ReactNode } from "react";
+import axios from "axios";
 import { api } from "../lib/api";
 import {
   AUTH_LOGOUT_EVENT,
@@ -48,6 +49,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
+      if (isMounted) {
+        setJwt(storedSession.jwt);
+        setUser(storedSession.user);
+      }
+
       try {
         const response = await api.get<{
           id: number;
@@ -76,9 +82,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       } catch (error) {
         console.error("Failed to restore auth session", error);
         if (!isMounted) return;
-        setJwt(null);
-        setUser(null);
-        clearAuthSession();
+
+        const status = axios.isAxiosError(error)
+          ? error.response?.status
+          : undefined;
+
+        if (status === 401 || status === 403) {
+          setJwt(null);
+          setUser(null);
+          clearAuthSession();
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }
