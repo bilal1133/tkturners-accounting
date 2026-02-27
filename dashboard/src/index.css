@@ -1,14 +1,76 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: "Manrope", "Segoe UI", sans-serif;
   line-height: 1.5;
   font-weight: 400;
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: #0f172a; /* slate-900 */
-  color: #f8fafc; /* slate-50 */
+  background-color: #020617;
+  color: #e2e8f0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Space Grotesk", "Manrope", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.35) rgba(15, 23, 42, 0.65);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.65);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.35);
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.65);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 211, 238, 0.55);
+}
+
+.scroll-surface {
+  scrollbar-gutter: stable both-edges;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scroll-thin::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.45);
+  border: 1px solid rgba(15, 23, 42, 0.65);
 }

@@ -128,6 +128,12 @@ export const AccountsPage = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setModalOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [currencyFilter, setCurrencyFilter] = useState("all");
+  const [visibilityFilter, setVisibilityFilter] = useState("all");
+  const [activityFilter, setActivityFilter] = useState("all");
+  const [minBalance, setMinBalance] = useState("");
+  const [maxBalance, setMaxBalance] = useState("");
 
   useEffect(() => {
     loadData();
@@ -254,10 +260,58 @@ export const AccountsPage = () => {
       .sort((a, b) => b.current - a.current);
   }, [accounts, metricsByAccount]);
 
-  const currencyTotals = useMemo<CurrencyBucket[]>(() => {
+  const currencyOptions = useMemo(() => {
+    const set = new Set<string>();
+    accountSummaries.forEach((summary) => set.add(summary.currencyLabel));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [accountSummaries]);
+
+  const filteredAccountSummaries = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    const min = minBalance.trim() ? toNumber(minBalance) : null;
+    const max = maxBalance.trim() ? toNumber(maxBalance) : null;
+
+    return accountSummaries.filter((summary) => {
+      if (currencyFilter !== "all" && summary.currencyLabel !== currencyFilter) {
+        return false;
+      }
+
+      if (visibilityFilter === "included" && summary.account.exclude_from_statistics) {
+        return false;
+      }
+      if (visibilityFilter === "excluded" && !summary.account.exclude_from_statistics) {
+        return false;
+      }
+
+      const hasRecentActivity =
+        summary.lastActivity &&
+        Date.now() - new Date(summary.lastActivity).getTime() <= 1000 * 60 * 60 * 24 * 30;
+      if (activityFilter === "active30" && !hasRecentActivity) return false;
+      if (activityFilter === "inactive30" && hasRecentActivity) return false;
+
+      if (min !== null && summary.current < min) return false;
+      if (max !== null && summary.current > max) return false;
+
+      if (!query) return true;
+      const haystack = [summary.account.name, summary.currencyLabel, summary.symbol]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [
+    accountSummaries,
+    searchText,
+    currencyFilter,
+    visibilityFilter,
+    activityFilter,
+    minBalance,
+    maxBalance,
+  ]);
+
+  const filteredCurrencyTotals = useMemo<CurrencyBucket[]>(() => {
     const buckets = new Map<string, CurrencyBucket>();
 
-    accountSummaries.forEach((summary) => {
+    filteredAccountSummaries.forEach((summary) => {
       const key = `${summary.symbol}:${summary.currencyLabel}`;
       const existing = buckets.get(key);
 
@@ -277,18 +331,18 @@ export const AccountsPage = () => {
     });
 
     return Array.from(buckets.values()).sort((a, b) => b.total - a.total);
-  }, [accountSummaries]);
+  }, [filteredAccountSummaries]);
 
-  const includedCount = accountSummaries.filter(
+  const includedCount = filteredAccountSummaries.filter(
     (summary) => !summary.account.exclude_from_statistics,
   ).length;
-  const excludedCount = accountSummaries.length - includedCount;
-  const activeInLast30Days = accountSummaries.filter((summary) => {
+  const excludedCount = filteredAccountSummaries.length - includedCount;
+  const activeInLast30Days = filteredAccountSummaries.filter((summary) => {
     if (!summary.lastActivity) return false;
     const diff = Date.now() - new Date(summary.lastActivity).getTime();
     return diff <= 1000 * 60 * 60 * 24 * 30;
   }).length;
-  const topAccount = accountSummaries[0];
+  const topAccount = filteredAccountSummaries[0];
 
   return (
     <div className="space-y-8 text-slate-200">
@@ -309,17 +363,72 @@ export const AccountsPage = () => {
       </div>
 
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <input
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Search account..."
+            className="xl:col-span-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none"
+          />
+          <select
+            value={currencyFilter}
+            onChange={(event) => setCurrencyFilter(event.target.value)}
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none"
+          >
+            <option value="all">All Currencies</option>
+            {currencyOptions.map((label) => (
+              <option key={label} value={label}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={visibilityFilter}
+            onChange={(event) => setVisibilityFilter(event.target.value)}
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none"
+          >
+            <option value="all">All Visibility</option>
+            <option value="included">Included</option>
+            <option value="excluded">Excluded</option>
+          </select>
+          <select
+            value={activityFilter}
+            onChange={(event) => setActivityFilter(event.target.value)}
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none"
+          >
+            <option value="all">Any Activity</option>
+            <option value="active30">Active in 30d</option>
+            <option value="inactive30">Inactive in 30d</option>
+          </select>
+          <div className="flex gap-2">
+            <input
+              value={minBalance}
+              onChange={(event) => setMinBalance(event.target.value)}
+              placeholder="Min"
+              type="number"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none"
+            />
+            <input
+              value={maxBalance}
+              onChange={(event) => setMaxBalance(event.target.value)}
+              placeholder="Max"
+              type="number"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none"
+            />
+          </div>
+        </div>
+
         <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
           <Wallet size={16} className="text-indigo-400" />
           Current balance by currency
         </div>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {currencyTotals.length === 0 ? (
+          {filteredCurrencyTotals.length === 0 ? (
             <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
-              Add your first account to see currency totals.
+              No accounts match current filters.
             </div>
           ) : (
-            currencyTotals.map((bucket) => (
+            filteredCurrencyTotals.map((bucket) => (
               <div
                 key={bucket.key}
                 className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
@@ -346,7 +455,7 @@ export const AccountsPage = () => {
             Accounts
           </p>
           <p className="mt-2 text-2xl font-semibold text-white">
-            {accountSummaries.length}
+            {filteredAccountSummaries.length}
           </p>
           <p className="mt-1 text-xs text-slate-400">
             {includedCount} included in statistics
@@ -393,7 +502,7 @@ export const AccountsPage = () => {
             Loading accounts...
           </div>
         ) : (
-          accountSummaries.map((summary) => {
+          filteredAccountSummaries.map((summary) => {
             const incoming = summary.inflow + summary.transferIn;
             const outgoing = summary.outflow + summary.transferOut;
             const changeClass =
@@ -483,7 +592,7 @@ export const AccountsPage = () => {
           })
         )}
 
-        {!loading && accountSummaries.length === 0 && (
+        {!loading && filteredAccountSummaries.length === 0 && (
           <div className="col-span-full rounded-xl border-2 border-dashed border-slate-800 p-12 text-center">
             <Landmark size={48} className="mx-auto mb-4 text-slate-600" />
             <h3 className="mb-2 text-lg font-medium text-white">

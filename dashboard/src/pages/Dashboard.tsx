@@ -5,6 +5,7 @@ import {
   Briefcase,
   Building2,
   CalendarCheck2,
+  Clock3,
   Coins,
   Filter,
   RefreshCw,
@@ -12,6 +13,7 @@ import {
   TrendingUp,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
 import { api } from "../lib/api";
 
@@ -160,6 +162,18 @@ type LoanStatusPoint = {
   monthly_installment_total: number;
 };
 
+type AccountBalancePoint = {
+  account_id: number;
+  account_document_id: string;
+  account_name: string;
+  currency_id: number | null;
+  currency_document_id: string | null;
+  currency_code: string;
+  currency_symbol: string;
+  excluded_from_statistics: boolean;
+  balance: number;
+};
+
 type DashboardSeries = {
   daily_cashflow: DailyCashflowPoint[];
   monthly_cashflow: MonthlyCashflowPoint[];
@@ -172,6 +186,7 @@ type DashboardSeries = {
   currency_breakdown: CurrencyPoint[];
   payroll_by_month: PayrollMonthPoint[];
   loan_status_summary: LoanStatusPoint[];
+  account_balances: AccountBalancePoint[];
 };
 
 type DashboardOptions = {
@@ -273,6 +288,19 @@ const formatDate = (dateText: string) => {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
+const inferCurrencyFromAccount = (account: {
+  currency_code?: string;
+  account_name?: string;
+}) => {
+  const direct = String(account.currency_code || "").toUpperCase().trim();
+  if (direct) return direct;
+
+  const name = String(account.account_name || "");
+  const matches = name.match(/[A-Z]{3}/g);
+  if (!matches || matches.length === 0) return "";
+  return matches[matches.length - 1];
+};
+
 const serializeFilters = (filters: FilterState) => {
   const params = new URLSearchParams();
 
@@ -337,7 +365,7 @@ const Panel = ({
   subtitle?: string;
   children: React.ReactNode;
 }) => (
-  <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+  <section className="rounded-2xl border border-cyan-900/30 bg-slate-950/70 p-5 shadow-[0_8px_30px_rgba(2,6,23,0.45)]">
     <div className="mb-4">
       <h2 className="text-lg font-semibold text-white">{title}</h2>
       {subtitle ? <p className="text-sm text-slate-400 mt-1">{subtitle}</p> : null}
@@ -357,13 +385,13 @@ const MetricCard = ({
   value: string;
   hint: string;
 }) => (
-  <article className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+  <article className="rounded-xl border border-cyan-900/25 bg-slate-950/85 p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.05)]">
     <div className="flex items-start justify-between gap-3">
       <div>
         <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-        <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+        <p className="mt-2 text-2xl font-semibold text-white md:text-[1.7rem]">{value}</p>
       </div>
-      <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-slate-300">
+      <div className="rounded-lg border border-cyan-900/40 bg-slate-900/80 p-2 text-cyan-200">
         {icon}
       </div>
     </div>
@@ -393,7 +421,7 @@ const MultiSelect = ({
         const next = Array.from(event.target.selectedOptions).map((option) => option.value);
         onChange(next);
       }}
-      className="h-28 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none"
+      className="scroll-thin h-28 w-full rounded-lg border border-cyan-900/35 bg-slate-950/90 px-3 py-2 text-sm text-slate-200 focus:border-cyan-400 focus:outline-none"
     >
       {options.map((option) => (
         <option key={option.value} value={option.value}>
@@ -518,6 +546,103 @@ const HorizontalBars = ({
   );
 };
 
+const PIE_COLORS = [
+  "#22d3ee",
+  "#818cf8",
+  "#34d399",
+  "#f59e0b",
+  "#f472b6",
+  "#fb7185",
+  "#60a5fa",
+  "#a78bfa",
+  "#2dd4bf",
+];
+
+const ExpensePieChart = ({ data }: { data: CategoryPoint[] }) => {
+  if (data.length === 0) {
+    return <EmptyState message="No category expense rows." />;
+  }
+
+  const normalized = data
+    .map((item) => ({
+      ...item,
+      value: Math.abs(Number(item.total || 0)),
+    }))
+    .filter((item) => item.value > 0);
+
+  if (normalized.length === 0) {
+    return <EmptyState message="No category expense rows." />;
+  }
+
+  const total = normalized.reduce((sum, item) => sum + item.value, 0);
+  const radius = 56;
+  const stroke = 20;
+  const circumference = 2 * Math.PI * radius;
+  let cumulative = 0;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr] md:items-center">
+      <div className="mx-auto h-[160px] w-[160px]">
+        <svg viewBox="0 0 160 160" className="h-full w-full">
+          <circle cx="80" cy="80" r={radius} fill="none" stroke="#1e293b" strokeWidth={stroke} />
+          {normalized.map((item, index) => {
+            const ratio = item.value / total;
+            const dash = ratio * circumference;
+            const offset = -cumulative * circumference;
+            cumulative += ratio;
+
+            return (
+              <circle
+                key={`${item.category}-${index}`}
+                cx="80"
+                cy="80"
+                r={radius}
+                fill="none"
+                stroke={PIE_COLORS[index % PIE_COLORS.length]}
+                strokeWidth={stroke}
+                strokeDasharray={`${dash} ${circumference - dash}`}
+                strokeDashoffset={offset}
+                strokeLinecap="butt"
+                transform="rotate(-90 80 80)"
+              />
+            );
+          })}
+          <text x="80" y="76" textAnchor="middle" className="fill-slate-400 text-[10px] uppercase tracking-wide">
+            Total
+          </text>
+          <text x="80" y="94" textAnchor="middle" className="fill-slate-100 text-[12px] font-semibold">
+            {toMoney(total)}
+          </text>
+        </svg>
+      </div>
+
+      <div className="scroll-surface scroll-thin max-h-[16rem] space-y-2 overflow-y-auto pr-2">
+        {normalized.map((item, index) => {
+          const share = (item.value / total) * 100;
+          return (
+            <div
+              key={`${item.category}-${item.value}-${index}`}
+              className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2"
+            >
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }}
+                  />
+                  <span className="truncate text-sm text-slate-200">{item.category}</span>
+                </div>
+                <span className="text-xs text-slate-400">{share.toFixed(1)}%</span>
+              </div>
+              <div className="text-xs text-slate-400">{toMoney(item.value)}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export const DashboardPage = () => {
   const [report, setReport] = useState<DashboardData | null>(null);
   const [draftFilters, setDraftFilters] = useState<FilterState>(EMPTY_FILTERS);
@@ -525,6 +650,11 @@ export const DashboardPage = () => {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [isFilterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [targetCurrency, setTargetCurrency] = useState("PKR");
+  const [usdRates, setUsdRates] = useState<Record<string, number> | null>(null);
+  const [fxTimestamp, setFxTimestamp] = useState<string | null>(null);
+  const [fxLoading, setFxLoading] = useState(false);
 
   const loadReport = useCallback(async () => {
     setLoading(true);
@@ -546,6 +676,38 @@ export const DashboardPage = () => {
   useEffect(() => {
     void loadReport();
   }, [loadReport, refreshTick]);
+
+  const loadFxRates = useCallback(async () => {
+    setFxLoading(true);
+    const urls = [
+      "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json",
+      "https://latest.currency-api.pages.dev/v1/currencies/usd.json",
+    ];
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const rates = data?.usd;
+        if (!rates || typeof rates !== "object") continue;
+
+        setUsdRates(rates as Record<string, number>);
+        setFxTimestamp(typeof data?.date === "string" ? data.date : null);
+        setFxLoading(false);
+        return;
+      } catch (error) {
+        console.error("Failed to fetch FX rates from", url, error);
+      }
+    }
+
+    setUsdRates(null);
+    setFxLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadFxRates();
+  }, [loadFxRates]);
 
   const options = report?.options;
 
@@ -632,12 +794,124 @@ export const DashboardPage = () => {
   );
 
   const hasData = Boolean(report);
+  const pendingLoanTotal = useMemo(
+    () =>
+      (report?.series.loan_status_summary ?? [])
+        .filter((entry) => entry.status !== "Paid Off")
+        .reduce((sum, entry) => sum + entry.outstanding_total, 0),
+    [report?.series.loan_status_summary],
+  );
+  const pendingLoanCount = useMemo(
+    () =>
+      (report?.series.loan_status_summary ?? [])
+        .filter((entry) => entry.status !== "Paid Off")
+        .reduce((sum, entry) => sum + entry.loan_count, 0),
+    [report?.series.loan_status_summary],
+  );
+
+  const holdingsCurrencyOptions = useMemo(() => {
+    const set = new Set<string>(["PKR"]);
+    (report?.options.currencies ?? []).forEach((currency) => {
+      const code = String(currency.code || "").toUpperCase().trim();
+      if (code) set.add(code);
+    });
+    (report?.series.account_balances ?? []).forEach((account) => {
+      const code = inferCurrencyFromAccount(account);
+      if (code) set.add(code);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [report?.options.currencies, report?.series.account_balances]);
+
+  const currencyMetaByCode = useMemo(() => {
+    const map = new Map<string, { symbol: string; name: string }>();
+    (report?.options.currencies ?? []).forEach((currency) => {
+      const code = String(currency.code || "").toUpperCase().trim();
+      if (!code) return;
+      map.set(code, {
+        symbol: String(currency.symbol || ""),
+        name: String(currency.name || currency.code || ""),
+      });
+    });
+    return map;
+  }, [report?.options.currencies]);
+
+  const holdingsSummary = useMemo(() => {
+    const balances = (report?.series.account_balances ?? []).filter(
+      (entry) => !entry.excluded_from_statistics,
+    );
+    if (balances.length === 0) {
+      return { total: 0, convertedCount: 0, missingCount: 0 };
+    }
+
+    const target = targetCurrency.toLowerCase();
+    const rates = usdRates;
+    let total = 0;
+    let convertedCount = 0;
+    let missingCount = 0;
+
+    balances.forEach((entry) => {
+      const amount = Number(entry.balance || 0);
+      const from = inferCurrencyFromAccount(entry).toLowerCase();
+      if (!Number.isFinite(amount) || !from) {
+        missingCount += 1;
+        return;
+      }
+
+      if (from === target) {
+        total += amount;
+        convertedCount += 1;
+        return;
+      }
+
+      if (!rates) {
+        missingCount += 1;
+        return;
+      }
+
+      const fromRate = from === "usd" ? 1 : Number(rates[from]);
+      const targetRate = target === "usd" ? 1 : Number(rates[target]);
+      if (!Number.isFinite(fromRate) || fromRate <= 0 || !Number.isFinite(targetRate) || targetRate <= 0) {
+        missingCount += 1;
+        return;
+      }
+
+      const usdAmount = amount / fromRate;
+      total += usdAmount * targetRate;
+      convertedCount += 1;
+    });
+
+    return {
+      total,
+      convertedCount,
+      missingCount,
+    };
+  }, [report?.series.account_balances, targetCurrency, usdRates]);
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (appliedFilters.dateFrom) count += 1;
+    if (appliedFilters.dateTo) count += 1;
+    if (appliedFilters.minAmount) count += 1;
+    if (appliedFilters.maxAmount) count += 1;
+    if (appliedFilters.search.trim()) count += 1;
+    if (appliedFilters.includeExcludedAccounts) count += 1;
+    count += appliedFilters.accountIds.length > 0 ? 1 : 0;
+    count += appliedFilters.currencyIds.length > 0 ? 1 : 0;
+    count += appliedFilters.paymentTypes.length > 0 ? 1 : 0;
+    count += appliedFilters.transactionKinds.length > 0 ? 1 : 0;
+    count += appliedFilters.categoryIds.length > 0 ? 1 : 0;
+    count += appliedFilters.contactIds.length > 0 ? 1 : 0;
+    count += appliedFilters.projectIds.length > 0 ? 1 : 0;
+    count += appliedFilters.departments.length > 0 ? 1 : 0;
+    count += appliedFilters.loanStatuses.length > 0 ? 1 : 0;
+    count += appliedFilters.payrollStatuses.length > 0 ? 1 : 0;
+    return count;
+  }, [appliedFilters]);
 
   return (
     <div className="space-y-6 text-slate-200">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white">Financial Dashboard</h1>
+          <h1 className="text-3xl font-bold text-white md:text-4xl">Financial Dashboard</h1>
           <p className="mt-1 text-slate-400">
             Comprehensive reporting across ledger, payroll, loans, accounts, contacts,
             categories, projects, and currencies.
@@ -648,7 +922,7 @@ export const DashboardPage = () => {
           <button
             type="button"
             onClick={() => setRefreshTick((prev) => prev + 1)}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
+            className="inline-flex items-center gap-2 rounded-lg border border-cyan-900/40 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
           >
             <RefreshCw size={16} /> Refresh
           </button>
@@ -657,26 +931,49 @@ export const DashboardPage = () => {
             onClick={() => {
               setDraftFilters(EMPTY_FILTERS);
               setAppliedFilters(EMPTY_FILTERS);
+              setFilterDrawerOpen(false);
             }}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
+            className="inline-flex items-center gap-2 rounded-lg border border-cyan-900/40 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
           >
             Clear Filters
           </button>
           <button
             type="button"
-            onClick={() => setAppliedFilters(draftFilters)}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            onClick={() => setFilterDrawerOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500"
           >
-            <Filter size={16} /> Apply Filters
+            <Filter size={16} /> Filters {activeFilterCount > 0 ? `(${activeFilterCount})` : ""}
           </button>
         </div>
       </div>
 
-      <Panel
-        title="Global Filters"
-        subtitle="Filter by bank accounts, date range, value range, entities, and dimensions."
-      >
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+      {isFilterDrawerOpen ? (
+        <div className="fixed inset-0 z-40">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"
+            aria-label="Close filter drawer"
+            onClick={() => setFilterDrawerOpen(false)}
+          />
+          <aside className="scroll-surface scroll-thin absolute right-0 top-0 h-full w-full max-w-2xl overflow-y-auto border-l border-cyan-900/40 bg-slate-950 p-5 md:p-6">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-white">Global Filters</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Filter by bank accounts, date range, value range, entities, and dimensions.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFilterDrawerOpen(false)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-cyan-900/40 bg-slate-900 text-slate-200 hover:bg-slate-800"
+                aria-label="Close filter drawer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">
               Date From
@@ -715,7 +1012,7 @@ export const DashboardPage = () => {
               onChange={(event) =>
                 setDraftFilters((prev) => ({ ...prev, minAmount: event.target.value }))
               }
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none"
+              className="w-full rounded-lg border border-cyan-900/35 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-cyan-400 focus:outline-none"
               placeholder="0.00"
             />
           </div>
@@ -731,7 +1028,7 @@ export const DashboardPage = () => {
               onChange={(event) =>
                 setDraftFilters((prev) => ({ ...prev, maxAmount: event.target.value }))
               }
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none"
+              className="w-full rounded-lg border border-cyan-900/35 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-cyan-400 focus:outline-none"
               placeholder="10000.00"
             />
           </div>
@@ -745,13 +1042,13 @@ export const DashboardPage = () => {
               onChange={(event) =>
                 setDraftFilters((prev) => ({ ...prev, search: event.target.value }))
               }
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none"
+              className="w-full rounded-lg border border-cyan-900/35 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-cyan-400 focus:outline-none"
               placeholder="note, contact, category..."
             />
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
           <MultiSelect
             label="Bank Accounts"
             options={accountOptions}
@@ -817,7 +1114,7 @@ export const DashboardPage = () => {
             }
           />
 
-          <div className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-300">
+          <div className="rounded-lg border border-cyan-900/35 bg-slate-950 px-4 py-3 text-sm text-slate-300">
             <label className="flex items-start gap-3">
               <input
                 type="checkbox"
@@ -838,8 +1135,32 @@ export const DashboardPage = () => {
               </span>
             </label>
           </div>
+            </div>
+
+            <div className="sticky bottom-0 mt-6 border-t border-cyan-900/30 bg-slate-950/95 pt-4">
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraftFilters(EMPTY_FILTERS)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-900/40 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
+                >
+                  Reset Draft
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAppliedFilters(draftFilters);
+                    setFilterDrawerOpen(false);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500"
+                >
+                  <Filter size={16} /> Apply Filters
+                </button>
+              </div>
+            </div>
+          </aside>
         </div>
-      </Panel>
+      ) : null}
 
       {errorMessage ? (
         <div className="rounded-xl border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">
@@ -848,7 +1169,7 @@ export const DashboardPage = () => {
       ) : null}
 
       {loading ? (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 text-sm text-slate-400">
+        <div className="rounded-2xl border border-cyan-900/30 bg-slate-900/50 p-6 text-sm text-slate-400">
           Loading dashboard report...
         </div>
       ) : null}
@@ -862,6 +1183,54 @@ export const DashboardPage = () => {
           <div className="rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-3 text-xs text-amber-200">
             Totals combine values from multiple currencies without FX conversion. Use the
             currency breakdown panel for exact per-currency visibility.
+          </div>
+
+          <div className="rounded-xl border border-cyan-900/30 bg-slate-950/80 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Total Holdings (Live FX)
+                </p>
+                <p className="mt-1 text-3xl font-semibold text-white">
+                  {(currencyMetaByCode.get(targetCurrency)?.symbol || `${targetCurrency} `) +
+                    toMoney(holdingsSummary.total)}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {holdingsSummary.convertedCount} accounts converted
+                  {holdingsSummary.missingCount > 0
+                    ? ` • ${holdingsSummary.missingCount} missing rates`
+                    : ""}
+                  {fxTimestamp ? ` • FX as of ${fxTimestamp}` : ""}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs uppercase tracking-wide text-slate-500">
+                  Currency
+                </label>
+                <select
+                  value={targetCurrency}
+                  onChange={(event) => setTargetCurrency(event.target.value)}
+                  className="rounded-lg border border-cyan-900/35 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-cyan-400 focus:outline-none"
+                >
+                  {holdingsCurrencyOptions.map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void loadFxRates()}
+                  className="rounded-lg border border-cyan-900/35 bg-slate-900 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+                  title="Refresh live FX rates"
+                >
+                  Refresh FX
+                </button>
+              </div>
+            </div>
+            {fxLoading ? (
+              <p className="mt-2 text-xs text-slate-500">Updating live FX rates...</p>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -913,6 +1282,36 @@ export const DashboardPage = () => {
               value={toMoney(report.totals.loan_outstanding_total)}
               hint={`${toInt(report.totals.active_loans)} active, ${toInt(report.totals.paid_off_loans)} paid off`}
             />
+            <MetricCard
+              icon={<Clock3 size={18} />}
+              label="Pending Loans Amount"
+              value={toMoney(pendingLoanTotal)}
+              hint={`${toInt(pendingLoanCount)} unpaid loans (active/defaulted)`}
+            />
+            <MetricCard
+              icon={<Building2 size={18} />}
+              label="Payroll Gross"
+              value={toMoney(report.totals.payroll_gross_total)}
+              hint="Total gross for filtered payroll slips"
+            />
+            <MetricCard
+              icon={<Users size={18} />}
+              label="Payroll Loan Deduction"
+              value={toMoney(report.totals.payroll_loan_deduction_total)}
+              hint="Loan repayments recovered via payroll"
+            />
+            <MetricCard
+              icon={<Briefcase size={18} />}
+              label="Defaulted Loans"
+              value={toInt(report.totals.defaulted_loans)}
+              hint="Loan status = Defaulted"
+            />
+            <MetricCard
+              icon={<Coins size={18} />}
+              label="Active Loans"
+              value={toInt(report.totals.active_loans)}
+              hint="Loan status = Active"
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
@@ -930,7 +1329,7 @@ export const DashboardPage = () => {
               {report.series.monthly_cashflow.length === 0 ? (
                 <EmptyState message="No monthly cashflow data for the selected filters." />
               ) : (
-                <div className="space-y-3">
+                <div className="scroll-surface scroll-thin max-h-[34rem] space-y-3 overflow-y-auto pr-2">
                   {report.series.monthly_cashflow.map((row) => {
                     const largest = Math.max(
                       Math.abs(row.income),
@@ -995,14 +1394,7 @@ export const DashboardPage = () => {
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
             <Panel title="Expense by Category">
-              <HorizontalBars
-                items={report.series.expense_by_category.map((entry) => ({
-                  label: entry.category,
-                  value: entry.total,
-                }))}
-                labelKey="label"
-                valueKey="value"
-              />
+              <ExpensePieChart data={report.series.expense_by_category} />
             </Panel>
 
             <Panel title="Income by Category">
@@ -1036,7 +1428,7 @@ export const DashboardPage = () => {
               {report.series.account_movement.length === 0 ? (
                 <EmptyState message="No account movement found." />
               ) : (
-                <div className="overflow-x-auto">
+                <div className="scroll-surface scroll-thin overflow-x-auto">
                   <table className="w-full min-w-[760px] text-sm">
                     <thead>
                       <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -1082,7 +1474,7 @@ export const DashboardPage = () => {
               {report.series.currency_breakdown.length === 0 ? (
                 <EmptyState message="No currency movement found." />
               ) : (
-                <div className="space-y-3">
+                <div className="scroll-surface scroll-thin max-h-[28rem] space-y-3 overflow-y-auto pr-2">
                   {report.series.currency_breakdown.map((entry) => (
                     <div
                       key={`${entry.currency_id ?? "none"}-${entry.code}-${entry.symbol}`}
@@ -1127,7 +1519,7 @@ export const DashboardPage = () => {
               {report.series.top_contacts.length === 0 ? (
                 <EmptyState message="No contact data in this filter scope." />
               ) : (
-                <div className="space-y-2">
+                <div className="scroll-surface scroll-thin max-h-[24rem] space-y-2 overflow-y-auto pr-2">
                   {report.series.top_contacts.map((entry) => (
                     <div
                       key={`${entry.contact_id ?? "none"}-${entry.contact_document_id ?? "none"}`}
@@ -1152,7 +1544,7 @@ export const DashboardPage = () => {
               {report.series.top_projects.length === 0 ? (
                 <EmptyState message="No project data in this filter scope." />
               ) : (
-                <div className="space-y-2">
+                <div className="scroll-surface scroll-thin max-h-[24rem] space-y-2 overflow-y-auto pr-2">
                   {report.series.top_projects.map((entry) => (
                     <div
                       key={`${entry.project_id ?? "none"}-${entry.project_document_id ?? "none"}`}
@@ -1182,7 +1574,7 @@ export const DashboardPage = () => {
               {report.series.payroll_by_month.length === 0 ? (
                 <EmptyState message="No payroll rows for the selected filters." />
               ) : (
-                <div className="space-y-3">
+                <div className="scroll-surface scroll-thin max-h-[28rem] space-y-3 overflow-y-auto pr-2">
                   {report.series.payroll_by_month.map((entry) => {
                     const largest = Math.max(entry.gross, entry.net, entry.loan_deduction, 1);
 
@@ -1243,7 +1635,7 @@ export const DashboardPage = () => {
               {report.series.loan_status_summary.length === 0 ? (
                 <EmptyState message="No loan rows for the selected filters." />
               ) : (
-                <div className="space-y-3">
+                <div className="scroll-surface scroll-thin max-h-[28rem] space-y-3 overflow-y-auto pr-2">
                   {report.series.loan_status_summary.map((entry) => (
                     <div key={entry.status} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
                       <div className="mb-2 flex items-center justify-between">
@@ -1269,33 +1661,6 @@ export const DashboardPage = () => {
                 </div>
               )}
             </Panel>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
-              icon={<Building2 size={18} />}
-              label="Payroll Gross"
-              value={toMoney(report.totals.payroll_gross_total)}
-              hint="Total gross for filtered payroll slips"
-            />
-            <MetricCard
-              icon={<Users size={18} />}
-              label="Payroll Loan Deduction"
-              value={toMoney(report.totals.payroll_loan_deduction_total)}
-              hint="Loan repayments recovered via payroll"
-            />
-            <MetricCard
-              icon={<Briefcase size={18} />}
-              label="Defaulted Loans"
-              value={toInt(report.totals.defaulted_loans)}
-              hint="Loan status = Defaulted"
-            />
-            <MetricCard
-              icon={<Coins size={18} />}
-              label="Active Loans"
-              value={toInt(report.totals.active_loans)}
-              hint="Loan status = Active"
-            />
           </div>
 
           <div className="text-xs text-slate-500">

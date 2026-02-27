@@ -194,6 +194,18 @@ type CurrencyAggregate = {
   transaction_count: number;
 };
 
+type AccountBalancePoint = {
+  account_id: number;
+  account_document_id: string;
+  account_name: string;
+  currency_id: number | null;
+  currency_document_id: string | null;
+  currency_code: string;
+  currency_symbol: string;
+  excluded_from_statistics: boolean;
+  balance: number;
+};
+
 const initAmountAggregate = (): AggregatedAmount => ({
   total: 0,
   count: 0,
@@ -344,6 +356,11 @@ const extractNormalizedTransaction = (
   const contact = tx?.contact || null;
   const category = tx?.category || null;
   const project = tx?.project || null;
+  const noteText = String(tx?.note || "").toLowerCase();
+  const inferredLoanCategory =
+    Boolean(tx?.loan_disbursement) ||
+    Boolean(tx?.loan_repayment) ||
+    noteText.includes("loan");
 
   const employeeComponent = getEmployeeComponent(contact);
 
@@ -371,7 +388,7 @@ const extractNormalizedTransaction = (
     contactName: String(contact?.name || "Unknown"),
     categoryId: relationId(category),
     categoryDocumentId: relationDocumentId(category),
-    categoryName: String(category?.name || "Uncategorized"),
+    categoryName: String(category?.name || (inferredLoanCategory ? "Loan" : "Uncategorized")),
     projectId: relationId(project),
     projectDocumentId: relationDocumentId(project),
     projectName: String(project?.name || "No Project"),
@@ -738,9 +755,183 @@ export default factories.createCoreController(
         }
       });
 
+      const contactById = new Map<number, any>();
+      asArray<any>(contacts).forEach((contact) => {
+        const contactId = relationId(contact);
+        if (contactId !== null) {
+          contactById.set(contactId, contact);
+        }
+      });
+
+      const categoryById = new Map<number, any>();
+      asArray<any>(categories).forEach((category) => {
+        const categoryId = relationId(category);
+        if (categoryId !== null) {
+          categoryById.set(categoryId, category);
+        }
+      });
+
+      const transactionCategoryLinkRows = await strapi.db.connection(
+        "transactions_category_lnk",
+      )
+        .select("transaction_id", "category_id")
+        .catch(() => []);
+      const transactionCategoryByTransactionId = new Map<number, number>();
+      asArray<any>(transactionCategoryLinkRows).forEach((row) => {
+        const transactionId = Number(row?.transaction_id);
+        const categoryId = Number(row?.category_id);
+        if (
+          Number.isInteger(transactionId) &&
+          Number.isInteger(categoryId) &&
+          !transactionCategoryByTransactionId.has(transactionId)
+        ) {
+          transactionCategoryByTransactionId.set(transactionId, categoryId);
+        }
+      });
+
+      const transactionContactLinkRows = await strapi.db.connection
+        .raw('SELECT transaction_id, contact_id FROM "transactions_contact_lnk"')
+        .then((result: any) => result?.rows || [])
+        .catch(() => []);
+      const transactionContactByTransactionId = new Map<number, number>();
+      asArray<any>(transactionContactLinkRows).forEach((row) => {
+        const transactionId = Number(row?.transaction_id);
+        const contactId = Number(row?.contact_id);
+        if (
+          Number.isInteger(transactionId) &&
+          Number.isInteger(contactId) &&
+          !transactionContactByTransactionId.has(transactionId)
+        ) {
+          transactionContactByTransactionId.set(transactionId, contactId);
+        }
+      });
+
+      const dbContactRows = await strapi.db.connection
+        .raw('SELECT id, document_id, name FROM "contacts"')
+        .then((result: any) => result?.rows || [])
+        .catch(() => []);
+      const dbContactById = new Map<number, { id: number; document_id: string | null; name: string | null }>();
+      asArray<any>(dbContactRows).forEach((row) => {
+        const id = Number(row?.id);
+        if (!Number.isInteger(id)) return;
+        dbContactById.set(id, {
+          id,
+          document_id:
+            typeof row?.document_id === "string" ? row.document_id : null,
+          name: typeof row?.name === "string" ? row.name : null,
+        });
+      });
+
       const normalizedTransactions = asArray<any>(transactions)
         .map((tx) => extractNormalizedTransaction(tx, accountById))
-        .filter((tx): tx is NormalizedTransaction => tx !== null);
+        .filter((tx): tx is NormalizedTransaction => tx !== null)
+        .map((tx) => {
+          const fallbackContactId =
+            tx.contactId ?? transactionContactByTransactionId.get(tx.id) ?? null;
+          if (tx.contactId === null && fallbackContactId !== null) {
+            const resolvedContact = contactById.get(fallbackContactId);
+            if (resolvedContact) {
+              tx = {
+                ...tx,
+                contactId: fallbackContactId,
+                contactDocumentId:
+                  tx.contactDocumentId || relationDocumentId(resolvedContact),
+                contactName: String(resolvedContact?.name || tx.contactName || "Unknown"),
+              };
+            } else {
+              const dbContact = dbContactById.get(fallbackContactId);
+              if (dbContact?.name) {
+                tx = {
+                  ...tx,
+                  contactId: fallbackContactId,
+                  contactDocumentId: tx.contactDocumentId || dbContact.document_id,
+                  contactName: dbContact.name,
+                };
+              }
+            }
+          }
+
+          const fallbackCategoryId =
+            tx.categoryId ?? transactionCategoryByTransactionId.get(tx.id) ?? null;
+          if (tx.categoryName !== "Uncategorized" && tx.categoryId !== null) return tx;
+          if (fallbackCategoryId === null) return tx;
+
+          const resolvedCategory = categoryById.get(fallbackCategoryId);
+          if (!resolvedCategory) return tx;
+
+          const resolvedName = String(resolvedCategory?.name || "").trim();
+          if (!resolvedName) return tx;
+
+          return {
+            ...tx,
+            categoryId: fallbackCategoryId,
+            categoryName: resolvedName,
+            categoryDocumentId:
+              tx.categoryDocumentId || relationDocumentId(resolvedCategory),
+          };
+        });
+
+      const accountBalanceMap = new Map<number, AccountBalancePoint>();
+      asArray<any>(accounts).forEach((account) => {
+        const accountId = relationId(account);
+        if (accountId === null) return;
+
+        const excludedFromStatistics = Boolean(account?.exclude_from_statistics);
+
+        const currency = account?.currency || null;
+        accountBalanceMap.set(accountId, {
+          account_id: accountId,
+          account_document_id: relationDocumentId(account) || "",
+          account_name: String(account?.name || "Unknown Account"),
+          currency_id: relationId(currency),
+          currency_document_id: relationDocumentId(currency),
+          currency_code: String(currency?.code || currency?.Code || ""),
+          currency_symbol: String(currency?.symbol || currency?.Symbol || ""),
+          excluded_from_statistics: excludedFromStatistics,
+          balance: round2(toNumber(account?.initial_amount)),
+        });
+      });
+
+      asArray<any>(transactions).forEach((tx) => {
+        const component = asArray<any>(tx?.type)[0];
+        if (!component || typeof component !== "object") return;
+
+        if (component.__component === "type.income") {
+          const accountId = relationId(component?.account);
+          if (accountId === null) return;
+          const balance = accountBalanceMap.get(accountId);
+          if (!balance) return;
+          balance.balance = round2(balance.balance + toNumber(component?.amount));
+          return;
+        }
+
+        if (component.__component === "type.expense") {
+          const accountId = relationId(component?.account);
+          if (accountId === null) return;
+          const balance = accountBalanceMap.get(accountId);
+          if (!balance) return;
+          balance.balance = round2(balance.balance - toNumber(component?.amount));
+          return;
+        }
+
+        const fromAccountId = relationId(component?.from_account);
+        if (fromAccountId !== null) {
+          const fromBalance = accountBalanceMap.get(fromAccountId);
+          if (fromBalance) {
+            fromBalance.balance = round2(
+              fromBalance.balance - toNumber(component?.from_amount),
+            );
+          }
+        }
+
+        const toAccountId = relationId(component?.to_account);
+        if (toAccountId !== null) {
+          const toBalance = accountBalanceMap.get(toAccountId);
+          if (toBalance) {
+            toBalance.balance = round2(toBalance.balance + toNumber(component?.to_amount));
+          }
+        }
+      });
 
       const filteredTransactions = normalizedTransactions.filter((tx) => {
         if (dateFrom && tx.date.getTime() < dateFrom.getTime()) {
@@ -1476,6 +1667,9 @@ export default factories.createCoreController(
       const loanStatusSummary = Array.from(loanStatusMap.values()).sort((a, b) =>
         a.status.localeCompare(b.status),
       );
+      const accountBalances = Array.from(accountBalanceMap.values()).sort(
+        (a, b) => Math.abs(b.balance) - Math.abs(a.balance),
+      );
 
       const options = {
         accounts: asArray<any>(accounts).map((account) => ({
@@ -1581,6 +1775,7 @@ export default factories.createCoreController(
             currency_breakdown: currencyBreakdown,
             payroll_by_month: payrollMonthly,
             loan_status_summary: loanStatusSummary,
+            account_balances: accountBalances,
           },
           options,
         },

@@ -1,12 +1,23 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BrowserRouter as Router,
   Routes,
   Route,
-  Link,
+  NavLink,
   Navigate,
 } from "react-router-dom";
-import { Home, Wallet, Users, Banknote, Landmark, Coins } from "lucide-react";
+import {
+  Home,
+  Wallet,
+  Users,
+  Banknote,
+  Landmark,
+  Coins,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  X,
+} from "lucide-react";
 import { LedgerPage } from "./pages/Ledger";
 import { ContactsPage } from "./pages/Contacts";
 import { ContactDetailsPage } from "./pages/ContactDetails";
@@ -23,67 +34,95 @@ import { TransactionDetailsPage } from "./pages/TransactionDetails";
 import { CurrenciesPage } from "./pages/Currencies";
 import { DashboardPage } from "./pages/Dashboard";
 
-const Sidebar = () => {
+type SidebarProps = {
+  collapsed?: boolean;
+  isMobile?: boolean;
+  onToggleCollapse?: () => void;
+  onNavigate?: () => void;
+};
+
+const Sidebar = ({
+  collapsed = false,
+  isMobile = false,
+  onToggleCollapse,
+  onNavigate,
+}: SidebarProps) => {
   const { logout, user } = useAuth();
+  const navItems = useMemo(
+    () => [
+      { to: "/", label: "Dashboard", icon: Home },
+      { to: "/accounts", label: "Accounts & Books", icon: Landmark },
+      { to: "/ledger", label: "Ledger", icon: Wallet },
+      { to: "/contacts", label: "Contacts & Docs", icon: Users },
+      { to: "/payroll", label: "Payroll & Loans", icon: Banknote },
+      { to: "/currencies", label: "Currencies", icon: Coins },
+    ],
+    [],
+  );
 
   return (
-    <aside className="w-64 border-r border-slate-800 bg-slate-900 h-screen flex flex-col">
-      <div className="p-6 border-b border-slate-800">
-        <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
+    <aside
+      className={`${collapsed && !isMobile ? "w-20" : "w-72"} border-r border-cyan-900/40 bg-slate-950/90 backdrop-blur-xl h-full flex flex-col transition-all duration-200`}
+    >
+      <div
+        className={`${collapsed && !isMobile ? "px-3 py-4" : "p-6"} border-b border-cyan-900/30 flex items-center justify-between gap-2`}
+      >
+        <h1
+          className={`text-xl font-bold bg-gradient-to-r from-cyan-300 via-sky-200 to-teal-200 bg-clip-text text-transparent ${collapsed && !isMobile ? "sr-only" : ""}`}
+        >
           Partner Accounting
         </h1>
+        {!isMobile ? (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-900/40 bg-slate-900/90 text-slate-200 hover:bg-slate-800"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
+        ) : null}
       </div>
-      <nav className="flex-1 p-4 space-y-2">
-        <Link
-          to="/"
-          className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-800 transition-colors"
-        >
-          <Home size={20} className="text-slate-400" />
-          <span className="font-medium text-slate-200">Dashboard</span>
-        </Link>
-        <Link
-          to="/accounts"
-          className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-800 transition-colors"
-        >
-          <Landmark size={20} className="text-slate-400" />
-          <span className="font-medium text-slate-200">Accounts & Books</span>
-        </Link>
-        <Link
-          to="/currencies"
-          className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-800 transition-colors"
-        >
-          <Coins size={20} className="text-slate-400" />
-          <span className="font-medium text-slate-200">Currencies</span>
-        </Link>
-        <Link
-          to="/ledger"
-          className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-800 transition-colors"
-        >
-          <Wallet size={20} className="text-slate-400" />
-          <span className="font-medium text-slate-200">Ledger</span>
-        </Link>
-        <Link
-          to="/contacts"
-          className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-800 transition-colors"
-        >
-          <Users size={20} className="text-slate-400" />
-          <span className="font-medium text-slate-200">Contacts & Docs</span>
-        </Link>
-        <Link
-          to="/payroll"
-          className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-800 transition-colors"
-        >
-          <Banknote size={20} className="text-slate-400" />
-          <span className="font-medium text-slate-200">Payroll & Loans</span>
-        </Link>
+      <nav className="scroll-surface scroll-thin flex-1 overflow-y-auto p-4 space-y-2 pr-2">
+        {navItems.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === "/"}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              `group flex items-center ${collapsed && !isMobile ? "justify-center" : "gap-3"} rounded-xl border px-3 py-2.5 transition-all ${
+                isActive
+                  ? "border-cyan-500/60 bg-cyan-500/10 text-white shadow-[0_0_0_1px_rgba(34,211,238,0.22)]"
+                  : "border-transparent text-slate-300 hover:border-cyan-900/60 hover:bg-slate-900/70 hover:text-slate-100"
+              }`
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <Icon
+                  size={18}
+                  className={
+                    isActive
+                      ? "text-cyan-300"
+                      : "text-slate-500 group-hover:text-slate-300"
+                  }
+                />
+                <span className={`${collapsed && !isMobile ? "sr-only" : "font-medium"}`}>
+                  {label}
+                </span>
+              </>
+            )}
+          </NavLink>
+        ))}
       </nav>
-      <div className="p-4 border-t border-slate-800">
-        <div className="mb-3 px-3">
+      <div className={`${collapsed && !isMobile ? "p-3" : "p-4"} border-t border-cyan-900/30`}>
+        <div className={`mb-3 ${collapsed && !isMobile ? "px-1" : "px-3"}`}>
           <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-            Logged In As
+            {collapsed && !isMobile ? "User" : "Logged In As"}
           </p>
           <p
-            className="text-sm text-slate-300 font-medium truncate mt-0.5"
+            className={`text-sm text-slate-200 font-medium truncate mt-0.5 ${collapsed && !isMobile ? "hidden" : ""}`}
             title={user?.email}
           >
             {user?.email}
@@ -91,21 +130,72 @@ const Sidebar = () => {
         </div>
         <button
           onClick={logout}
-          className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium py-2 rounded-lg transition-colors border border-slate-700"
+          className={`w-full flex items-center justify-center ${collapsed && !isMobile ? "" : "gap-2"} bg-slate-900 hover:bg-slate-800 text-slate-200 font-medium py-2.5 rounded-xl transition-colors border border-cyan-900/40`}
+          title={collapsed && !isMobile ? "Sign Out" : undefined}
         >
-          <LogOut size={16} /> Sign Out
+          <LogOut size={16} />
+          <span className={collapsed && !isMobile ? "sr-only" : ""}>Sign Out</span>
         </button>
       </div>
     </aside>
   );
 };
 
-const AppLayout = ({ children }: { children: React.ReactNode }) => (
-  <div className="flex h-screen overflow-hidden">
-    <Sidebar />
-    <main className="flex-1 overflow-y-auto bg-slate-950 p-8">{children}</main>
-  </div>
-);
+const AppLayout = ({ children }: { children: React.ReactNode }) => {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("sidebar_collapsed");
+    if (stored === "1") setSidebarCollapsed(true);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("sidebar_collapsed", sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-[radial-gradient(circle_at_10%_20%,rgba(34,211,238,0.12),transparent_45%),radial-gradient(circle_at_85%_4%,rgba(45,212,191,0.1),transparent_35%),#020617]">
+      <div className="hidden md:block">
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+        />
+      </div>
+
+      {sidebarOpen ? (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close navigation overlay"
+          />
+          <div className="relative z-50 h-full max-w-[18rem]">
+            <Sidebar isMobile onNavigate={() => setSidebarOpen(false)} />
+          </div>
+        </div>
+      ) : null}
+
+      <main className="scroll-surface scroll-thin relative flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-cyan-900/30 bg-slate-950/70 px-4 py-2.5 md:hidden">
+          <h2 className="text-sm font-semibold tracking-wide text-cyan-100">
+            Partner Accounting
+          </h2>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((prev) => !prev)}
+            className="inline-flex items-center justify-center rounded-lg border border-cyan-900/40 bg-slate-900/90 p-2 text-slate-200"
+            aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"}
+          >
+            {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+        </div>
+        {children}
+      </main>
+    </div>
+  );
+};
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { jwt, isLoading } = useAuth();

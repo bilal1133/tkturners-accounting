@@ -75,10 +75,18 @@ export const ContactDetailsPage = () => {
       const contactData = contactRes.data.data;
       setContact(contactData);
 
-      const [txRes, projRes, loanRes] = await Promise.all([
-        api.get(
-          `/transactions?filters[contact][id][$eq]=${contactData.id}&populate[0]=type.currency&populate[1]=type.account&populate[2]=type.from_account&populate[3]=type.to_account&populate[4]=category&populate[5]=loan_disbursement&populate[6]=loan_repayment&sort=date_time:desc`,
-        ),
+      const txByIdRequest = api.get(
+        `/transactions?filters[contact][id][$eq]=${contactData.id}&populate[0]=type.currency&populate[1]=type.account&populate[2]=type.from_account&populate[3]=type.to_account&populate[4]=category&populate[5]=loan_disbursement&populate[6]=loan_repayment&sort=date_time:desc`,
+      );
+      const txByDocumentIdRequest = contactData.documentId
+        ? api.get(
+            `/transactions?filters[contact][documentId][$eq]=${contactData.documentId}&populate[0]=type.currency&populate[1]=type.account&populate[2]=type.from_account&populate[3]=type.to_account&populate[4]=category&populate[5]=loan_disbursement&populate[6]=loan_repayment&sort=date_time:desc`,
+          )
+        : Promise.resolve({ data: { data: [] } });
+
+      const [txByIdRes, txByDocumentIdRes, projRes, loanRes] = await Promise.all([
+        txByIdRequest,
+        txByDocumentIdRequest,
         api.get(
           `/projects?filters[contact][documentId][$eq]=${id}&populate=*`,
         ),
@@ -87,7 +95,19 @@ export const ContactDetailsPage = () => {
         ),
       ]);
 
-      setTransactions(txRes.data.data);
+      const mergedTransactions = [
+        ...(txByIdRes.data.data || []),
+        ...(txByDocumentIdRes.data.data || []),
+      ];
+      const uniqueTransactions = Array.from(
+        new Map(mergedTransactions.map((tx: any) => [tx.id, tx])).values(),
+      ).sort(
+        (left: any, right: any) =>
+          new Date(right.date_time || right.createdAt || 0).getTime() -
+          new Date(left.date_time || left.createdAt || 0).getTime(),
+      );
+
+      setTransactions(uniqueTransactions);
       setProjects(projRes.data.data);
 
       // Preferred source: loans linked through disbursement transaction contact.

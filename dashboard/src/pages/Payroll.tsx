@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   Trash2,
   Search,
+  Filter,
+  X,
 } from "lucide-react";
 import { format } from "date-fns";
 import { LoanModal } from "../components/LoanModal";
@@ -140,6 +142,8 @@ export const PayrollPage = () => {
   const [loanMaxRemaining, setLoanMaxRemaining] = useState("");
   const [loanMinMonthly, setLoanMinMonthly] = useState("");
   const [loanMaxMonthly, setLoanMaxMonthly] = useState("");
+  const [isPayrollFiltersOpen, setPayrollFiltersOpen] = useState(false);
+  const [isLoanFiltersOpen, setLoanFiltersOpen] = useState(false);
 
   const [isLoanModalOpen, setLoanModalOpen] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState<any>(null);
@@ -343,6 +347,48 @@ export const PayrollPage = () => {
     return Array.from(statusSet).sort();
   }, [loanViews]);
 
+  const payrollFilterCount = useMemo(() => {
+    const values = [
+      payrollSearch,
+      payrollDateFrom,
+      payrollDateTo,
+      payrollMinNet,
+      payrollMaxNet,
+    ];
+    let count = values.filter((value) => value.trim().length > 0).length;
+    if (payrollStatusFilter !== "all") count += 1;
+    if (payrollLedgerFilter !== "all") count += 1;
+    return count;
+  }, [
+    payrollSearch,
+    payrollStatusFilter,
+    payrollLedgerFilter,
+    payrollDateFrom,
+    payrollDateTo,
+    payrollMinNet,
+    payrollMaxNet,
+  ]);
+
+  const loanFilterCount = useMemo(() => {
+    const values = [
+      loanSearch,
+      loanMinRemaining,
+      loanMaxRemaining,
+      loanMinMonthly,
+      loanMaxMonthly,
+    ];
+    let count = values.filter((value) => value.trim().length > 0).length;
+    if (loanStatusFilter !== "all") count += 1;
+    return count;
+  }, [
+    loanSearch,
+    loanStatusFilter,
+    loanMinRemaining,
+    loanMaxRemaining,
+    loanMinMonthly,
+    loanMaxMonthly,
+  ]);
+
   return (
     <div className="space-y-8 text-slate-200">
       <div className="flex justify-between items-center">
@@ -361,90 +407,44 @@ export const PayrollPage = () => {
               <Banknote size={18} className="text-blue-400" />
               Payroll Batches
             </h2>
-            <button
-              onClick={() => navigate("/payrolls/generate")}
-              className="text-sm bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-md flex items-center gap-1 font-medium text-white transition-colors"
-            >
-              <Plus size={16} /> Create Draft
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPayrollFiltersOpen(true)}
+                className="text-sm bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-md inline-flex items-center gap-2 text-slate-200 transition-colors"
+              >
+                <Filter size={15} />
+                Filters
+                {payrollFilterCount > 0 && (
+                  <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-semibold text-white">
+                    {payrollFilterCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => navigate("/payrolls/generate")}
+                className="text-sm bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-md flex items-center gap-1 font-medium text-white transition-colors"
+              >
+                <Plus size={16} /> Create Draft
+              </button>
+            </div>
           </div>
 
-          <div className="p-4 border-b border-slate-800 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div className="relative sm:col-span-2">
-                <Search
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-                />
-                <input
-                  value={payrollSearch}
-                  onChange={(event) => setPayrollSearch(event.target.value)}
-                  placeholder="Search by batch id, date, status..."
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none transition-colors focus:border-indigo-500"
-                />
-              </div>
-
-              <select
-                value={payrollStatusFilter}
-                onChange={(event) => setPayrollStatusFilter(event.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              >
-                <option value="all">All Statuses</option>
-                <option value="draft">Draft</option>
-                <option value="processed">Processed</option>
-              </select>
-
-              <select
-                value={payrollLedgerFilter}
-                onChange={(event) => setPayrollLedgerFilter(event.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              >
-                <option value="all">All Ledger States</option>
-                <option value="synced">Ledger Synced</option>
-                <option value="unsynced">Ledger Unsynced</option>
-              </select>
-
-              <input
-                type="date"
-                value={payrollDateFrom}
-                onChange={(event) => setPayrollDateFrom(event.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-              <input
-                type="date"
-                value={payrollDateTo}
-                onChange={(event) => setPayrollDateTo(event.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={payrollMinNet}
-                onChange={(event) => setPayrollMinNet(event.target.value)}
-                placeholder="Min net pay"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={payrollMaxNet}
-                onChange={(event) => setPayrollMaxNet(event.target.value)}
-                placeholder="Max net pay"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-slate-400">
+          <div className="p-4 border-b border-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
               <span>{filteredPayrolls.length} payroll batch(es)</span>
-              <button
-                onClick={resetPayrollFilters}
-                className="text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                Reset payroll filters
-              </button>
+              <div className="flex items-center gap-3">
+                <span>
+                  {payrollFilterCount > 0
+                    ? `${payrollFilterCount} active filter(s)`
+                    : "No active filters"}
+                </span>
+                <button
+                  onClick={resetPayrollFilters}
+                  className="text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  Reset payroll filters
+                </button>
+              </div>
             </div>
           </div>
 
@@ -552,95 +552,48 @@ export const PayrollPage = () => {
               <CreditCard size={18} className="text-purple-400" />
               Loans
             </h2>
-            <button
-              onClick={() => {
-                setSelectedLoan(null);
-                setLoanModalMode("issue");
-                setLoanModalOpen(true);
-              }}
-              className="text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-md flex items-center gap-1"
-            >
-              <Plus size={16} /> Disburse Loan
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setLoanFiltersOpen(true)}
+                className="text-sm bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-md inline-flex items-center gap-2 text-slate-200 transition-colors"
+              >
+                <Filter size={15} />
+                Filters
+                {loanFilterCount > 0 && (
+                  <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-semibold text-white">
+                    {loanFilterCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedLoan(null);
+                  setLoanModalMode("issue");
+                  setLoanModalOpen(true);
+                }}
+                className="text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-md flex items-center gap-1"
+              >
+                <Plus size={16} /> Disburse Loan
+              </button>
+            </div>
           </div>
 
-          <div className="p-4 border-b border-slate-800 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div className="relative sm:col-span-2">
-                <Search
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-                />
-                <input
-                  value={loanSearch}
-                  onChange={(event) => setLoanSearch(event.target.value)}
-                  placeholder="Search by employee or status..."
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none transition-colors focus:border-indigo-500"
-                />
-              </div>
-
-              <select
-                value={loanStatusFilter}
-                onChange={(event) => setLoanStatusFilter(event.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              >
-                <option value="all">All Statuses</option>
-                {loanStatuses.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={loanMinRemaining}
-                onChange={(event) => setLoanMinRemaining(event.target.value)}
-                placeholder="Min remaining"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={loanMaxRemaining}
-                onChange={(event) => setLoanMaxRemaining(event.target.value)}
-                placeholder="Max remaining"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={loanMinMonthly}
-                onChange={(event) => setLoanMinMonthly(event.target.value)}
-                placeholder="Min monthly"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={loanMaxMonthly}
-                onChange={(event) => setLoanMaxMonthly(event.target.value)}
-                placeholder="Max monthly"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-slate-400">
+          <div className="p-4 border-b border-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
               <span>{filteredLoanViews.length} loan(s)</span>
-              <button
-                onClick={resetLoanFilters}
-                className="text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                Reset loan filters
-              </button>
+              <div className="flex items-center gap-3">
+                <span>
+                  {loanFilterCount > 0
+                    ? `${loanFilterCount} active filter(s)`
+                    : "No active filters"}
+                </span>
+                <button
+                  onClick={resetLoanFilters}
+                  className="text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  Reset loan filters
+                </button>
+              </div>
             </div>
           </div>
 
@@ -734,6 +687,221 @@ export const PayrollPage = () => {
         mode={loanModalMode}
         loanData={selectedLoan}
       />
+
+      {isPayrollFiltersOpen && (
+        <div className="fixed inset-0 z-40">
+          <div
+            className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"
+            onClick={() => setPayrollFiltersOpen(false)}
+          />
+          <div className="absolute right-0 top-0 h-full w-full max-w-xl border-l border-slate-800 bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+              <div>
+                <h3 className="text-base font-semibold text-white">Payroll Filters</h3>
+                <p className="text-xs text-slate-400">{filteredPayrolls.length} result(s)</p>
+              </div>
+              <button
+                onClick={() => setPayrollFiltersOpen(false)}
+                className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="h-[calc(100%-140px)] overflow-y-auto px-5 py-4">
+              <div className="space-y-4">
+                <div className="relative">
+                  <Search
+                    size={16}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                  />
+                  <input
+                    value={payrollSearch}
+                    onChange={(event) => setPayrollSearch(event.target.value)}
+                    placeholder="Search by batch id, date, status..."
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none transition-colors focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <select
+                    value={payrollStatusFilter}
+                    onChange={(event) => setPayrollStatusFilter(event.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  >
+                    <option value="all">All Statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="processed">Processed</option>
+                  </select>
+
+                  <select
+                    value={payrollLedgerFilter}
+                    onChange={(event) => setPayrollLedgerFilter(event.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  >
+                    <option value="all">All Ledger States</option>
+                    <option value="synced">Ledger Synced</option>
+                    <option value="unsynced">Ledger Unsynced</option>
+                  </select>
+
+                  <input
+                    type="date"
+                    value={payrollDateFrom}
+                    onChange={(event) => setPayrollDateFrom(event.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                  <input
+                    type="date"
+                    value={payrollDateTo}
+                    onChange={(event) => setPayrollDateTo(event.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={payrollMinNet}
+                    onChange={(event) => setPayrollMinNet(event.target.value)}
+                    placeholder="Min net pay"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={payrollMaxNet}
+                    onChange={(event) => setPayrollMaxNet(event.target.value)}
+                    placeholder="Max net pay"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-800 px-5 py-4">
+              <button
+                onClick={resetPayrollFilters}
+                className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                Reset filters
+              </button>
+              <button
+                onClick={() => setPayrollFiltersOpen(false)}
+                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLoanFiltersOpen && (
+        <div className="fixed inset-0 z-40">
+          <div
+            className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"
+            onClick={() => setLoanFiltersOpen(false)}
+          />
+          <div className="absolute right-0 top-0 h-full w-full max-w-xl border-l border-slate-800 bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+              <div>
+                <h3 className="text-base font-semibold text-white">Loan Filters</h3>
+                <p className="text-xs text-slate-400">{filteredLoanViews.length} result(s)</p>
+              </div>
+              <button
+                onClick={() => setLoanFiltersOpen(false)}
+                className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="h-[calc(100%-140px)] overflow-y-auto px-5 py-4">
+              <div className="space-y-4">
+                <div className="relative">
+                  <Search
+                    size={16}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                  />
+                  <input
+                    value={loanSearch}
+                    onChange={(event) => setLoanSearch(event.target.value)}
+                    placeholder="Search by employee or status..."
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none transition-colors focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <select
+                    value={loanStatusFilter}
+                    onChange={(event) => setLoanStatusFilter(event.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  >
+                    <option value="all">All Statuses</option>
+                    {loanStatuses.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={loanMinRemaining}
+                    onChange={(event) => setLoanMinRemaining(event.target.value)}
+                    placeholder="Min remaining"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={loanMaxRemaining}
+                    onChange={(event) => setLoanMaxRemaining(event.target.value)}
+                    placeholder="Max remaining"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={loanMinMonthly}
+                    onChange={(event) => setLoanMinMonthly(event.target.value)}
+                    placeholder="Min monthly"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={loanMaxMonthly}
+                    onChange={(event) => setLoanMaxMonthly(event.target.value)}
+                    placeholder="Max monthly"
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-800 px-5 py-4">
+              <button
+                onClick={resetLoanFilters}
+                className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                Reset filters
+              </button>
+              <button
+                onClick={() => setLoanFiltersOpen(false)}
+                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
