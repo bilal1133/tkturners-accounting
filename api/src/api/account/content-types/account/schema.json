@@ -28,6 +28,11 @@
     },
     "exclude_from_statistics": {
       "type": "boolean"
+    },
+    "owner_user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
     }
   }
 }
