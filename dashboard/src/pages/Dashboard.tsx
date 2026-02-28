@@ -274,6 +274,7 @@ const toMoney = (value: number) =>
   });
 
 const toInt = (value: number) => value.toLocaleString();
+const HOLDINGS_BASE_CURRENCY = "PKR";
 
 const formatMonth = (month: string) => {
   if (!month || !/^\d{4}-\d{2}$/.test(month)) return month;
@@ -651,7 +652,6 @@ export const DashboardPage = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [isFilterDrawerOpen, setFilterDrawerOpen] = useState(false);
-  const [targetCurrency, setTargetCurrency] = useState("PKR");
   const [usdRates, setUsdRates] = useState<Record<string, number> | null>(null);
   const [fxTimestamp, setFxTimestamp] = useState<string | null>(null);
   const [fxLoading, setFxLoading] = useState(false);
@@ -702,6 +702,7 @@ export const DashboardPage = () => {
     }
 
     setUsdRates(null);
+    setFxTimestamp(null);
     setFxLoading(false);
   }, []);
 
@@ -809,19 +810,6 @@ export const DashboardPage = () => {
     [report?.series.loan_status_summary],
   );
 
-  const holdingsCurrencyOptions = useMemo(() => {
-    const set = new Set<string>(["PKR"]);
-    (report?.options.currencies ?? []).forEach((currency) => {
-      const code = String(currency.code || "").toUpperCase().trim();
-      if (code) set.add(code);
-    });
-    (report?.series.account_balances ?? []).forEach((account) => {
-      const code = inferCurrencyFromAccount(account);
-      if (code) set.add(code);
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [report?.options.currencies, report?.series.account_balances]);
-
   const currencyMetaByCode = useMemo(() => {
     const map = new Map<string, { symbol: string; name: string }>();
     (report?.options.currencies ?? []).forEach((currency) => {
@@ -836,30 +824,38 @@ export const DashboardPage = () => {
   }, [report?.options.currencies]);
 
   const holdingsSummary = useMemo(() => {
-    const balances = (report?.series.account_balances ?? []).filter(
-      (entry) => !entry.excluded_from_statistics,
-    );
+    const balances = report?.series.account_balances ?? [];
     if (balances.length === 0) {
-      return { total: 0, convertedCount: 0, missingCount: 0 };
+      return { total: 0, includedCount: 0, missingCount: 0, excludedCount: 0 };
     }
 
-    const target = targetCurrency.toLowerCase();
+    const base = HOLDINGS_BASE_CURRENCY.toLowerCase();
     const rates = usdRates;
     let total = 0;
-    let convertedCount = 0;
+    let includedCount = 0;
     let missingCount = 0;
+    let excludedCount = 0;
 
     balances.forEach((entry) => {
+      if (entry.excluded_from_statistics) {
+        excludedCount += 1;
+      }
+
       const amount = Number(entry.balance || 0);
-      const from = inferCurrencyFromAccount(entry).toLowerCase();
-      if (!Number.isFinite(amount) || !from) {
+      if (!Number.isFinite(amount)) {
         missingCount += 1;
         return;
       }
 
-      if (from === target) {
+      const from = inferCurrencyFromAccount(entry).toLowerCase();
+      if (!from) {
+        missingCount += 1;
+        return;
+      }
+
+      if (from === base) {
         total += amount;
-        convertedCount += 1;
+        includedCount += 1;
         return;
       }
 
@@ -869,23 +865,29 @@ export const DashboardPage = () => {
       }
 
       const fromRate = from === "usd" ? 1 : Number(rates[from]);
-      const targetRate = target === "usd" ? 1 : Number(rates[target]);
-      if (!Number.isFinite(fromRate) || fromRate <= 0 || !Number.isFinite(targetRate) || targetRate <= 0) {
+      const baseRate = base === "usd" ? 1 : Number(rates[base]);
+      if (
+        !Number.isFinite(fromRate) ||
+        fromRate <= 0 ||
+        !Number.isFinite(baseRate) ||
+        baseRate <= 0
+      ) {
         missingCount += 1;
         return;
       }
 
       const usdAmount = amount / fromRate;
-      total += usdAmount * targetRate;
-      convertedCount += 1;
+      total += usdAmount * baseRate;
+      includedCount += 1;
     });
 
     return {
       total,
-      convertedCount,
+      includedCount,
       missingCount,
+      excludedCount,
     };
-  }, [report?.series.account_balances, targetCurrency, usdRates]);
+  }, [report?.series.account_balances, usdRates]);
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (appliedFilters.dateFrom) count += 1;
@@ -1181,43 +1183,32 @@ export const DashboardPage = () => {
       {!loading && hasData && report ? (
         <>
           <div className="rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-3 text-xs text-amber-200">
-            Totals combine values from multiple currencies without FX conversion. Use the
-            currency breakdown panel for exact per-currency visibility.
+            Total holdings are converted to {HOLDINGS_BASE_CURRENCY} using live FX rates.
+            Use the currency breakdown panel for exact per-currency visibility.
           </div>
 
           <div className="rounded-xl border border-cyan-900/30 bg-slate-950/80 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-500">
-                  Total Holdings (Live FX)
+                  Total Holdings (Base Currency)
                 </p>
                 <p className="mt-1 text-3xl font-semibold text-white">
-                  {(currencyMetaByCode.get(targetCurrency)?.symbol || `${targetCurrency} `) +
-                    toMoney(holdingsSummary.total)}
+                  {(currencyMetaByCode.get(HOLDINGS_BASE_CURRENCY)?.symbol ||
+                    `${HOLDINGS_BASE_CURRENCY} `) + toMoney(holdingsSummary.total)}
                 </p>
                 <p className="mt-1 text-xs text-slate-400">
-                  {holdingsSummary.convertedCount} accounts converted
+                  {holdingsSummary.includedCount} accounts included
+                  {holdingsSummary.excludedCount > 0
+                    ? ` • includes ${holdingsSummary.excludedCount} excluded accounts`
+                    : ""}
                   {holdingsSummary.missingCount > 0
-                    ? ` • ${holdingsSummary.missingCount} missing rates`
+                    ? ` • ${holdingsSummary.missingCount} missing rates/currency`
                     : ""}
                   {fxTimestamp ? ` • FX as of ${fxTimestamp}` : ""}
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs uppercase tracking-wide text-slate-500">
-                  Currency
-                </label>
-                <select
-                  value={targetCurrency}
-                  onChange={(event) => setTargetCurrency(event.target.value)}
-                  className="rounded-lg border border-cyan-900/35 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-cyan-400 focus:outline-none"
-                >
-                  {holdingsCurrencyOptions.map((code) => (
-                    <option key={code} value={code}>
-                      {code}
-                    </option>
-                  ))}
-                </select>
                 <button
                   type="button"
                   onClick={() => void loadFxRates()}
