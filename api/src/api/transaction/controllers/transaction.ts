@@ -872,6 +872,7 @@ export default factories.createCoreController(
         });
 
       const accountBalanceMap = new Map<number, AccountBalancePoint>();
+      const accountBalanceByDocumentId = new Map<string, AccountBalancePoint>();
       asArray<any>(accounts).forEach((account) => {
         const accountId = relationId(account);
         if (accountId === null) return;
@@ -879,7 +880,7 @@ export default factories.createCoreController(
         const excludedFromStatistics = Boolean(account?.exclude_from_statistics);
 
         const currency = account?.currency || null;
-        accountBalanceMap.set(accountId, {
+        const point: AccountBalancePoint = {
           account_id: accountId,
           account_document_id: relationDocumentId(account) || "",
           account_name: String(account?.name || "Unknown Account"),
@@ -889,47 +890,57 @@ export default factories.createCoreController(
           currency_symbol: String(currency?.symbol || currency?.Symbol || ""),
           excluded_from_statistics: excludedFromStatistics,
           balance: round2(toNumber(account?.initial_amount)),
-        });
+        };
+        accountBalanceMap.set(accountId, point);
+        if (point.account_document_id) {
+          accountBalanceByDocumentId.set(point.account_document_id, point);
+        }
       });
+
+      const resolveBalancePoint = (accountRelation: any): AccountBalancePoint | null => {
+        const accountId = relationId(accountRelation);
+        if (accountId !== null) {
+          const byId = accountBalanceMap.get(accountId);
+          if (byId) return byId;
+        }
+
+        const documentId = relationDocumentId(accountRelation);
+        if (documentId) {
+          const byDocumentId = accountBalanceByDocumentId.get(documentId);
+          if (byDocumentId) return byDocumentId;
+        }
+
+        return null;
+      };
 
       asArray<any>(transactions).forEach((tx) => {
         const component = asArray<any>(tx?.type)[0];
         if (!component || typeof component !== "object") return;
 
         if (component.__component === "type.income") {
-          const accountId = relationId(component?.account);
-          if (accountId === null) return;
-          const balance = accountBalanceMap.get(accountId);
+          const balance = resolveBalancePoint(component?.account);
           if (!balance) return;
           balance.balance = round2(balance.balance + toNumber(component?.amount));
           return;
         }
 
         if (component.__component === "type.expense") {
-          const accountId = relationId(component?.account);
-          if (accountId === null) return;
-          const balance = accountBalanceMap.get(accountId);
+          const balance = resolveBalancePoint(component?.account);
           if (!balance) return;
           balance.balance = round2(balance.balance - toNumber(component?.amount));
           return;
         }
 
-        const fromAccountId = relationId(component?.from_account);
-        if (fromAccountId !== null) {
-          const fromBalance = accountBalanceMap.get(fromAccountId);
-          if (fromBalance) {
-            fromBalance.balance = round2(
-              fromBalance.balance - toNumber(component?.from_amount),
-            );
-          }
+        const fromBalance = resolveBalancePoint(component?.from_account);
+        if (fromBalance) {
+          fromBalance.balance = round2(
+            fromBalance.balance - toNumber(component?.from_amount),
+          );
         }
 
-        const toAccountId = relationId(component?.to_account);
-        if (toAccountId !== null) {
-          const toBalance = accountBalanceMap.get(toAccountId);
-          if (toBalance) {
-            toBalance.balance = round2(toBalance.balance + toNumber(component?.to_amount));
-          }
+        const toBalance = resolveBalancePoint(component?.to_account);
+        if (toBalance) {
+          toBalance.balance = round2(toBalance.balance + toNumber(component?.to_amount));
         }
       });
 
